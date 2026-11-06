@@ -19,6 +19,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Glance 홈 화면 위젯 등록기 -->
+        <receiver
+            android:name=".FoldstItWidgetReceiver"
+            android:exported="true"
+            android:label="Foldst it 메모">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/foldstit_widget_info" />
+        </receiver>
     </application>
 
 </manifest>
