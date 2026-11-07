@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,22 +80,19 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935), Color(0xFF1976D2), true)
 }
 
-// 갤럭시 시스템에 탑재된 실제 글꼴 매핑 (사용자 기기 폰트 목록 기반)
-enum class MemoFont(val title: String, val internalName: String) {
-    DEFAULT("내 폰 설정 글꼴", ""),
-    SAMSUNG_ONE("SamsungOne", "sec-roboto-light"),
-    CHOCO_COOKY("초코쿠키", "chococooky"),
-    COOL_JAZZ("쿨재즈", "cooljazz"),
-    NANUM_MYEONGJO("나눔명조", "serif"),
-    ROBOTO("Roboto 고딕", "sans-serif");
+// 한글 글리프(Korean Glyph)가 확실하게 변하는 네이티브 & 스타일 변형 폰트 매퍼
+enum class MemoFont(val title: String, val weight: FontWeight, val style: FontStyle, val baseType: String) {
+    DEFAULT("내 폰 기본체", FontWeight.Normal, FontStyle.Normal, "sans-serif"),
+    BOLD_GOTHIC("단단한 굵은고딕", FontWeight.ExtraBold, FontStyle.Normal, "sans-serif"),
+    MYEONGJO("감성 명조체", FontWeight.Normal, FontStyle.Normal, "serif"),
+    ITALIC_HAND("손글씨 이탤릭", FontWeight.Medium, FontStyle.Italic, "sans-serif"),
+    MONO("클래식 타자기", FontWeight.Normal, FontStyle.Normal, "monospace");
 
     fun getFontFamily(): FontFamily {
-        if (internalName.isEmpty()) return FontFamily.Default
-        return try {
-            val tf = Typeface.create(internalName, Typeface.NORMAL)
-            FontFamily(tf)
-        } catch (_: Exception) {
-            FontFamily.Default
+        return when (this) {
+            MYEONGJO -> FontFamily.Serif
+            MONO -> FontFamily.Monospace
+            else -> FontFamily.Default
         }
     }
 }
@@ -127,7 +125,7 @@ class MainActivity : ComponentActivity() {
                     context = this,
                     openMemoId = initialEditMemoId,
                     onClearOpenMemoId = { initialEditMemoId = null },
-                    onPinWidget = { memo -> requestPinWidget(memo) }
+                    onPinWidgetsSequential = { memos -> requestPinWidgetsSequential(memos) }
                 )
             }
         }
@@ -139,26 +137,57 @@ class MainActivity : ComponentActivity() {
         initialEditMemoId = intent?.getStringExtra("EDIT_MEMO_ID")
     }
 
-    private fun requestPinWidget(memo: MemoItem) {
+    // 다중 선택된 메모들을 순차적으로 위젯 핀 요청하는 체이닝 메서드
+    private fun requestPinWidgetsSequential(memos: List<MemoItem>) {
+        if (memos.isEmpty()) return
         val appWidgetManager = AppWidgetManager.getInstance(this)
         val myProvider = ComponentName(this, FoldstItWidgetReceiver::class.java)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && appWidgetManager.isRequestPinAppWidgetSupported) {
             val pendingMemoPrefs = getSharedPreferences("pending_pin_prefs", Context.MODE_PRIVATE)
-            pendingMemoPrefs.edit().putString("pending_memo_id", memo.id).apply()
+
+            // 첫 번째 메모 즉시 요청
+            val first = memos[0]
+            pendingMemoPrefs.edit().putString("pending_memo_id", first.id).apply()
 
             val successCallback = Intent(this, FoldstItWidgetReceiver::class.java).apply {
                 action = "com.example.foldstit.PIN_WIDGET_ASSIGN"
-                putExtra("TARGET_MEMO_ID", memo.id)
+                putExtra("TARGET_MEMO_ID", first.id)
             }
             val successPendingIntent = PendingIntent.getBroadcast(
-                this, memo.id.hashCode(), successCallback,
+                this, first.id.hashCode(), successCallback,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             )
             appWidgetManager.requestPinAppWidget(myProvider, null, successPendingIntent)
-            Toast.makeText(this, "홈 화면에 위젯 추가 창이 열렸습니다.", Toast.LENGTH_SHORT).show()
+
+            if (memos.size > 1) {
+                Toast.makeText(
+                    this,
+                    "첫 번째 위젯이 추가되었습니다. 남은 ${memos.size - 1}개의 위젯도 순서대로 홈 화면에 배치해 주세요.",
+                    Toast.LENGTH_LONG
+                ).show()
+
+                // 런처 충돌 방지를 위해 나머지 메모는 1.5초 간격으로 순차 핀 요청 팝업
+                for (i in 1 until memos.size) {
+                    val m = memos[i]
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        pendingMemoPrefs.edit().putString("pending_memo_id", m.id).apply()
+                        val cb = Intent(this, FoldstItWidgetReceiver::class.java).apply {
+                            action = "com.example.foldstit.PIN_WIDGET_ASSIGN"
+                            putExtra("TARGET_MEMO_ID", m.id)
+                        }
+                        val pi = PendingIntent.getBroadcast(
+                            this, m.id.hashCode(), cb,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                        )
+                        appWidgetManager.requestPinAppWidget(myProvider, null, pi)
+                    }, i * 1500L)
+                }
+            } else {
+                Toast.makeText(this, "홈 화면에 위젯 추가 창이 열렸습니다.", Toast.LENGTH_SHORT).show()
+            }
         } else {
-            Toast.makeText(this, "홈 화면에서 위젯을 직접 추가해 주세요.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "홈 화면에서 위젯을 길게 눌러 직접 추가해 주세요.", Toast.LENGTH_SHORT).show()
         }
     }
 }
@@ -168,7 +197,7 @@ fun PegboardScreen(
     context: Context,
     openMemoId: String?,
     onClearOpenMemoId: () -> Unit,
-    onPinWidget: (MemoItem) -> Unit
+    onPinWidgetsSequential: (List<MemoItem>) -> Unit
 ) {
     val prefs = remember { context.getSharedPreferences("foldstit_board", Context.MODE_PRIVATE) }
     val memoList = remember { mutableStateListOf<MemoItem>() }
@@ -250,7 +279,6 @@ fun PegboardScreen(
                 }
                 arr.put(obj)
 
-                // 위젯용 비트맵 생성 캐싱
                 if (memo.strokes.isNotEmpty()) {
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
@@ -307,7 +335,6 @@ fun PegboardScreen(
             .fillMaxSize()
             .background(Color(0xFFD4D4D4))
     ) {
-        // 타공판 배경
         Canvas(modifier = Modifier.fillMaxSize()) {
             val step = 28.dp.toPx()
             for (x in 0..(size.width / step).toInt()) {
@@ -321,7 +348,6 @@ fun PegboardScreen(
             }
         }
 
-        // 포스트잇 목록 그리드
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 160.dp),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 36.dp, bottom = 100.dp),
@@ -364,7 +390,6 @@ fun PegboardScreen(
                             )
                         }
                 ) {
-                    // 연습장 줄눈금
                     if (memo.theme.hasLines) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val lineGap = 22.dp.toPx()
@@ -381,7 +406,6 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 상단 중앙 압정 핀 (16dp 원형 규격)
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -416,6 +440,8 @@ fun PegboardScreen(
                                 fontSize = 13.sp,
                                 color = memo.theme.textColor,
                                 fontFamily = memo.font.getFontFamily(),
+                                fontWeight = memo.font.weight,
+                                fontStyle = memo.font.style,
                                 lineHeight = 18.sp
                             ),
                             maxLines = 6,
@@ -444,7 +470,7 @@ fun PegboardScreen(
             }
         }
 
-        // 다중 선택 액션 바
+        // 다중 선택 바: 선택된 모든 메모를 순차 체이닝으로 위젯 등록
         if (isSelectionMode) {
             Card(
                 shape = RoundedCornerShape(32.dp),
@@ -462,14 +488,16 @@ fun PegboardScreen(
                     Text("${selectedMemoIds.size}개 선택됨", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
 
                     TextButton(onClick = {
-                        val firstSelected = memoList.find { it.id == selectedMemoIds.firstOrNull() }
-                        if (firstSelected != null) {
-                            onPinWidget(firstSelected)
+                        val selectedMemos = memoList.filter { selectedMemoIds.contains(it.id) }
+                        if (selectedMemos.isNotEmpty()) {
+                            onPinWidgetsSequential(selectedMemos)
+                            isSelectionMode = false
+                            selectedMemoIds.clear()
                         }
                     }) {
                         Icon(Icons.Default.PushPin, contentDescription = "Pin", tint = Color(0xFF81D4FA), modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("위젯 등록", color = Color(0xFF81D4FA), fontSize = 12.sp)
+                        Text("위젯 일괄 등록", color = Color(0xFF81D4FA), fontSize = 12.sp)
                     }
 
                     TextButton(onClick = {
@@ -650,7 +678,7 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // 상세 설정 패널 (갤럭시 실제 시스템 글꼴 리스트)
+                    // 폰트 설정 패널: 탭 즉시 자형이 뚜렷하게 바뀌도록 5가지 스타일 배치
                     AnimatedVisibility(visible = showMemoSettings) {
                         Card(
                             shape = RoundedCornerShape(8.dp),
@@ -676,7 +704,7 @@ fun MemoEditorDialog(
                                     }
                                 }
 
-                                Text("글꼴 선택 (내 갤럭시 단말 글꼴)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("글꼴 선택 (한글 실시간 적용)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -689,7 +717,14 @@ fun MemoEditorDialog(
                                                 containerColor = if (currentFont == f) Color(0xFFE0E0E0) else Color.Transparent
                                             )
                                         ) {
-                                            Text(f.title, fontSize = 9.sp, color = Color.Black, fontFamily = f.getFontFamily())
+                                            Text(
+                                                f.title,
+                                                fontSize = 9.sp,
+                                                color = Color.Black,
+                                                fontFamily = f.getFontFamily(),
+                                                fontWeight = f.weight,
+                                                fontStyle = f.style
+                                            )
                                         }
                                     }
                                 }
@@ -736,6 +771,8 @@ fun MemoEditorDialog(
                                 fontSize = memoFontSize.sp,
                                 color = currentTheme.textColor,
                                 fontFamily = currentFont.getFontFamily(),
+                                fontWeight = currentFont.weight,
+                                fontStyle = currentFont.style,
                                 lineHeight = (memoFontSize + 8).sp
                             ),
                             modifier = Modifier
@@ -745,7 +782,14 @@ fun MemoEditorDialog(
                             enabled = !isPenMode,
                             decorationBox = { innerTextField ->
                                 if (memoText.isEmpty() && strokes.isEmpty()) {
-                                    Text("메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...", color = currentTheme.textColor.copy(alpha = 0.4f), fontSize = memoFontSize.sp, fontFamily = currentFont.getFontFamily())
+                                    Text(
+                                        "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
+                                        color = currentTheme.textColor.copy(alpha = 0.4f),
+                                        fontSize = memoFontSize.sp,
+                                        fontFamily = currentFont.getFontFamily(),
+                                        fontWeight = currentFont.weight,
+                                        fontStyle = currentFont.style
+                                    )
                                 }
                                 innerTextField()
                             }
