@@ -4,12 +4,15 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.Image
+import androidx.glance.ImageProvider
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
@@ -23,6 +26,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
+import java.io.File
 
 class FoldstItWidget : GlanceAppWidget() {
 
@@ -56,69 +60,86 @@ class FoldstItWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
-            val prefs = context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE)
-            val text = prefs.getString("text", "")?.trim() ?: ""
-            val themeName = prefs.getString("theme", "YELLOW") ?: "YELLOW"
-            val fontSizePref = prefs.getInt("fontSize", 18)
-            val hasDrawing = prefs.getBoolean("hasDrawing", false)
+            val legacyPrefs = context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE)
+            val memoText = legacyPrefs.getString("text", "")?.trim() ?: ""
+            val themeName = legacyPrefs.getString("theme", "POSTIT_YELLOW") ?: "POSTIT_YELLOW"
+            val targetMemoId = legacyPrefs.getString("latest_memo_id", "") ?: ""
 
-            // Compose Color 직접 지정 (Resources$NotFoundException 크래시 방지)
-            val backgroundColor = when (themeName) {
-                "BLUE" -> Color(0xFFE1F5FE)
-                "GREEN" -> Color(0xFFE8F5E9)
-                "PURPLE" -> Color(0xFFF3E5F5)
-                "PEACH" -> Color(0xFFFFE0B2)
-                else -> Color(0xFFFFF9C4)
+            // 테마별 색상 매핑
+            val (bgColor, textColor, pinColor) = when (themeName) {
+                "POSTIT_BLUE" -> Triple(Color(0xFF81D4FA), Color(0xFF212121), Color(0xFFE53935))
+                "NOTEBOOK" -> Triple(Color(0xFFFAFAFA), Color(0xFF1A237E), Color(0xFF43A047))
+                "BLACK_PAPER" -> Triple(Color(0xFF263238), Color(0xFFECEFF1), Color(0xFFFFB300))
+                "WHITE_PAPER" -> Triple(Color(0xFFFFFFFF), Color(0xFF212121), Color(0xFFE91E63))
+                else -> Triple(Color(0xFFFFF176), Color(0xFF212121), Color(0xFF1E88E5)) // 노랑 포스트잇
             }
 
-            val memoText = when {
-                text.isNotEmpty() && hasDrawing -> "$text\n\n[✍️ 필기 포함]"
-                text.isNotEmpty() -> text
-                hasDrawing -> "[✍️ 손글씨 필기 메모]"
-                else -> "터치하여 포스트잇 메모를 작성하세요 📌"
-            }
+            // 손글씨 비트맵 파일 캐시 확인
+            val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
+            val hasBitmapDrawing = drawingFile != null && drawingFile.exists()
 
-            val widgetFontSize = (fontSizePref - 3).coerceAtLeast(13)
-
-            // 3M 포스트잇 모양 (라운드 코너 + 패딩 + 클릭 시 앱 실행)
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
-                    .cornerRadius(16.dp)
-                    .background(backgroundColor)
+                    .cornerRadius(12.dp)
+                    .background(bgColor)
                     .clickable(actionStartActivity<MainActivity>())
-                    .padding(14.dp)
+                    .padding(12.dp)
             ) {
                 Column(
                     modifier = GlanceModifier.fillMaxSize(),
                     verticalAlignment = Alignment.Top,
                     horizontalAlignment = Alignment.Start
                 ) {
-                    // 상단 헤더
+                    // 상단 중앙 핀 & 헤더
                     Row(
-                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 6.dp),
+                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 4.dp),
                         horizontalAlignment = Alignment.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Foldst it 📌",
+                            text = "📌",
+                            style = TextStyle(fontSize = 11.sp)
+                        )
+                        Text(
+                            text = " Foldst it",
                             style = TextStyle(
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = ColorProvider(Color(0xFF795548))
+                                color = ColorProvider(pinColor)
                             )
                         )
                     }
 
-                    // 본문 메모 텍스트
-                    Text(
-                        text = memoText,
-                        style = TextStyle(
-                            fontSize = widgetFontSize.sp,
-                            color = ColorProvider(Color(0xFF2C2C2C))
-                        ),
-                        maxLines = 10
-                    )
+                    // 텍스트 내용
+                    if (memoText.isNotEmpty()) {
+                        Text(
+                            text = memoText,
+                            style = TextStyle(
+                                fontSize = 13.sp,
+                                color = ColorProvider(textColor)
+                            ),
+                            maxLines = if (hasBitmapDrawing) 3 else 8
+                        )
+                    }
+
+                    // 손글씨 드로잉 실제 비트맵 렌더링
+                    if (hasBitmapDrawing && drawingFile != null) {
+                        val bitmap = BitmapFactory.decodeFile(drawingFile.absolutePath)
+                        if (bitmap != null) {
+                            Spacer(modifier = GlanceModifier.height(4.dp))
+                            Image(
+                                provider = ImageProvider(bitmap),
+                                contentDescription = "Drawing Preview",
+                                modifier = GlanceModifier.fillMaxWidth().height(70.dp)
+                            )
+                        }
+                    } else if (memoText.isEmpty()) {
+                        Text(
+                            text = "빈 포스트잇 메모입니다.",
+                            style = TextStyle(fontSize = 12.sp, color = ColorProvider(Color.Gray))
+                        )
+                    }
                 }
             }
         }
@@ -127,4 +148,16 @@ class FoldstItWidget : GlanceAppWidget() {
 
 class FoldstItWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = FoldstItWidget()
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        if (intent.action == "com.example.foldstit.PIN_WIDGET_ASSIGN") {
+            val memoId = intent.getStringExtra("TARGET_MEMO_ID")
+            if (!memoId.isNullOrEmpty()) {
+                val prefs = context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE)
+                prefs.edit().putString("latest_memo_id", memoId).apply()
+                FoldstItWidget.notifyUpdate(context)
+            }
+        }
+    }
 }
