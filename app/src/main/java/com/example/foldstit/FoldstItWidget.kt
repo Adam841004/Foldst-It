@@ -62,9 +62,8 @@ class FoldstItWidget : GlanceAppWidget() {
             }
         }
 
-        // 연습장 테마 가로 줄눈금 비트맵 캐시 생성기
         fun getNotebookBackground(context: Context): Bitmap {
-            val file = File(context.cacheDir, "notebook_grid_bg.png")
+            val file = File(context.cacheDir, "notebook_grid_clean.png")
             if (file.exists()) {
                 val b = BitmapFactory.decodeFile(file.absolutePath)
                 if (b != null) return b
@@ -73,13 +72,13 @@ class FoldstItWidget : GlanceAppWidget() {
             val canvas = Canvas(bmp)
             canvas.drawColor(android.graphics.Color.WHITE)
             val paint = Paint().apply {
-                color = android.graphics.Color.parseColor("#448D6E63")
-                strokeWidth = 2.5f
+                color = android.graphics.Color.parseColor("#388D6E63")
+                strokeWidth = 2f
             }
-            var y = 50f
+            var y = 60f
             while (y < 400f) {
                 canvas.drawLine(0f, y, 400f, y, paint)
-                y += 45f
+                y += 44f
             }
             try {
                 java.io.FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
@@ -137,14 +136,13 @@ class FoldstItWidget : GlanceAppWidget() {
                 "PASTEL_BLUE" -> Triple(Color(0xFFE1F5FE), Color(0xFF2C2C2C), Color(0xFFE53935))
                 "PASTEL_PINK" -> Triple(Color(0xFFFCE4EC), Color(0xFF2C2C2C), Color(0xFF43A047))
                 "PASTEL_GREEN" -> Triple(Color(0xFFE8F5E9), Color(0xFF2C2C2C), Color(0xFFFFB300))
-                "NOTEBOOK" -> Triple(Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935))
+                "NOTEBOOK" -> Triple(Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFD84315))
                 else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
             }
 
-            // Glance 규격: null 전달 시 시스템 설정 글꼴(One UI 기본)을 그대로 상속
             val widgetFontFamily: FontFamily? = when (fontName) {
-                "NANUM_MYEONGJO" -> FontFamily.Serif
-                "ROBOTO" -> FontFamily.SansSerif
+                "MYEONGJO", "COOL_JAZZ" -> FontFamily.Serif
+                "MONO" -> FontFamily.Monospace
                 else -> null
             }
 
@@ -157,7 +155,7 @@ class FoldstItWidget : GlanceAppWidget() {
                 actionStartActivity<MainActivity>()
             }
 
-            // 포스트잇 위젯 메인 프레임
+            // 위젯 프레임: 테두리 없이 둥근 모서리와 은은한 여백
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
@@ -166,7 +164,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     .clickable(clickAction)
                     .padding(6.dp)
             ) {
-                // 1. 연습장 줄눈금 배경 렌더링
+                // 연습장 줄눈금
                 if (themeName == "NOTEBOOK") {
                     val gridBmp = getNotebookBackground(context)
                     Image(
@@ -176,24 +174,24 @@ class FoldstItWidget : GlanceAppWidget() {
                     )
                 }
 
-                // 2. 상단 중앙 압정 핀 (메인 타공판 카드와 일치)
+                // 온전한 원형 핀 (상단 안쪽에 위치하여 잘림 없음)
                 Row(
-                    modifier = GlanceModifier.fillMaxWidth(),
+                    modifier = GlanceModifier.fillMaxWidth().padding(top = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Box(
                         modifier = GlanceModifier
-                            .size(16.dp)
-                            .cornerRadius(8.dp)
+                            .size(14.dp)
+                            .cornerRadius(7.dp)
                             .background(pinColor)
                     ) {}
                 }
 
-                // 3. 본문 텍스트 + 손글씨 드로잉 완전 오버레이
+                // 본문 오버레이
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
-                        .padding(top = 10.dp, start = 4.dp, end = 4.dp, bottom = 4.dp)
+                        .padding(top = 18.dp, start = 6.dp, end = 6.dp, bottom = 4.dp)
                 ) {
                     if (memoText.isNotEmpty()) {
                         Text(
