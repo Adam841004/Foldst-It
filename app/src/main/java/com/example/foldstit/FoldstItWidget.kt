@@ -62,7 +62,7 @@ class FoldstItWidget : GlanceAppWidget() {
             }
         }
 
-        // 연습장 줄눈금 비트맵 생성 캐싱
+        // 연습장 테마 가로 줄눈금 비트맵 캐시 생성기
         fun getNotebookBackground(context: Context): Bitmap {
             val file = File(context.cacheDir, "notebook_grid_bg.png")
             if (file.exists()) {
@@ -133,7 +133,6 @@ class FoldstItWidget : GlanceAppWidget() {
                 } catch (_: Exception) {}
             }
 
-            // 앱 메인 화면과 100% 동일한 테마 매핑 (배경, 글자, 핀, 테두리)
             val (bgColor, textColor, pinColor) = when (themeName) {
                 "PASTEL_BLUE" -> Triple(Color(0xFFE1F5FE), Color(0xFF2C2C2C), Color(0xFFE53935))
                 "PASTEL_PINK" -> Triple(Color(0xFFFCE4EC), Color(0xFF2C2C2C), Color(0xFF43A047))
@@ -142,10 +141,11 @@ class FoldstItWidget : GlanceAppWidget() {
                 else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
             }
 
-            val widgetFontFamily = when (fontName) {
+            // Glance 규격: null 전달 시 시스템 설정 글꼴(One UI 기본)을 그대로 상속
+            val widgetFontFamily: FontFamily? = when (fontName) {
                 "NANUM_MYEONGJO" -> FontFamily.Serif
                 "ROBOTO" -> FontFamily.SansSerif
-                else -> FontFamily.Default
+                else -> null
             }
 
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
@@ -157,7 +157,7 @@ class FoldstItWidget : GlanceAppWidget() {
                 actionStartActivity<MainActivity>()
             }
 
-            // 포스트잇 위젯 컨테이너 (앱 메인 카드와 동일 규격)
+            // 포스트잇 위젯 메인 프레임
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
@@ -166,7 +166,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     .clickable(clickAction)
                     .padding(6.dp)
             ) {
-                // 1. 연습장 모드일 경우 가로 줄눈금 배경 주입
+                // 1. 연습장 줄눈금 배경 렌더링
                 if (themeName == "NOTEBOOK") {
                     val gridBmp = getNotebookBackground(context)
                     Image(
@@ -176,7 +176,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     )
                 }
 
-                // 2. 상단 중앙 압정 핀 (앱과 똑같은 16dp 크기 및 색상)
+                // 2. 상단 중앙 압정 핀 (메인 타공판 카드와 일치)
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -189,7 +189,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     ) {}
                 }
 
-                // 3. 본문 오버레이 (텍스트 + 손글씨)
+                // 3. 본문 텍스트 + 손글씨 드로잉 완전 오버레이
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
