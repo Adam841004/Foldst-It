@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Paint
-import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -86,30 +85,14 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935), true)
 }
 
-// 안드로이드 네이티브 폰트 규격
-enum class MemoFont(val title: String, val systemFamilyName: String) {
-    DEFAULT("내 폰 기본체", ""),
-    SERIF("감성 명조체", "serif"),
-    MONOSPACE("클래식 타자기", "monospace"),
-    SANS_SERIF("깔끔 고딕", "sans-serif"),
-    CASUAL("캐주얼 필기", "casual"),
-    CONDENSED("장체(압축)", "sans-serif-condensed")
-}
-
-// OS 레벨에서 Bold와 Italic을 결합하여 확실하게 렌더링하는 폰트 생성기
-fun getStyledFontFamily(font: MemoFont, isBold: Boolean, isItalic: Boolean): FontFamily {
-    val style = when {
-        isBold && isItalic -> Typeface.BOLD_ITALIC
-        isBold -> Typeface.BOLD
-        isItalic -> Typeface.ITALIC
-        else -> Typeface.NORMAL
-    }
-    val tf = if (font.systemFamilyName.isEmpty()) {
-        Typeface.create(Typeface.DEFAULT, style)
-    } else {
-        Typeface.create(font.systemFamilyName, style)
-    }
-    return FontFamily(tf)
+// 안드로이드 네이티브 실시간 확정 글꼴 규격
+enum class MemoFont(val title: String, val family: FontFamily, val baseWeight: FontWeight) {
+    DEFAULT("내 폰 기본체", FontFamily.Default, FontWeight.Normal),
+    SERIF("감성 명조체", FontFamily.Serif, FontWeight.Normal),
+    MONOSPACE("클래식 타자기", FontFamily.Monospace, FontWeight.Normal),
+    SANS("깔끔 고딕", FontFamily.SansSerif, FontWeight.Normal),
+    HEAVY("초강력 블랙", FontFamily.Default, FontWeight.Black),
+    LIGHT("슬림 라이트", FontFamily.Default, FontWeight.Light)
 }
 
 data class NormPoint(val x: Float, val y: Float)
@@ -432,7 +415,6 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 온전한 원형 핀
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -478,8 +460,9 @@ fun PegboardScreen(
                             style = TextStyle(
                                 fontSize = 13.sp,
                                 color = memo.theme.textColor,
-                                fontFamily = getStyledFontFamily(memo.font, memo.isBold, memo.isItalic),
-                                textGeometricTransform = if (memo.isItalic) TextGeometricTransform(skewX = -0.25f) else null,
+                                fontFamily = memo.font.family,
+                                fontWeight = if (memo.isBold) FontWeight.ExtraBold else memo.font.baseWeight,
+                                textGeometricTransform = if (memo.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
                                 textDecoration = textDecor,
                                 lineHeight = 18.sp
                             ),
@@ -487,7 +470,6 @@ fun PegboardScreen(
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // 획별 고유 컬러로 드로잉 렌더링
                         if (memo.strokes.isNotEmpty()) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 memo.strokes.forEach { s ->
@@ -701,12 +683,10 @@ fun MemoEditorDialog(
     var isPenMode by remember { mutableStateOf(false) }
     var showMemoSettings by remember { mutableStateOf(false) }
 
-    // [신규] 사진 스타일의 다크 플로팅 드로잉 팔레트 상태
-    var selectedDrawColorHex by remember { mutableStateOf("#E53935") } // 기본 빨간색 (사진 참조)
+    var selectedDrawColorHex by remember { mutableStateOf("#E53935") }
     var selectedPenWidth by remember { mutableStateOf(memo.penWidth) }
     var showDrawingPalette by remember { mutableStateOf(false) }
 
-    // 10색 컬러 칩 (사진 참조: 흰색, 빨강, 주황, 노랑, 초록, 하늘, 파랑, 보라, 검정, 핑크)
     val colorPalette = listOf(
         "#FFFFFF", "#E53935", "#FF9800", "#FFEB3B", "#4CAF50",
         "#00BCD4", "#2196F3", "#9C27B0", "#212121", "#E91E63"
@@ -753,7 +733,6 @@ fun MemoEditorDialog(
                                     Icon(Icons.Default.Create, contentDescription = "Pen", tint = if (isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
                                 }
 
-                                // 펜 모드일 때 색상 변경 팔레트 호출 버튼
                                 if (isPenMode) {
                                     Box(
                                         modifier = Modifier
@@ -765,7 +744,6 @@ fun MemoEditorDialog(
                                     )
                                 }
 
-                                // 엑셀 스타일 [B] [I] [U] [S] 서식 버튼
                                 TextButton(
                                     onClick = { isBold = !isBold },
                                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
@@ -819,7 +797,6 @@ fun MemoEditorDialog(
                             }
                         }
 
-                        // 상단 폰트 & 테마 설정 패널
                         AnimatedVisibility(visible = showMemoSettings) {
                             Card(
                                 shape = RoundedCornerShape(8.dp),
@@ -862,7 +839,8 @@ fun MemoEditorDialog(
                                                     f.title,
                                                     fontSize = 10.sp,
                                                     color = Color.Black,
-                                                    fontFamily = getStyledFontFamily(f, isBold, isItalic)
+                                                    fontFamily = f.family,
+                                                    fontWeight = if (isBold) FontWeight.ExtraBold else f.baseWeight
                                                 )
                                             }
                                         }
@@ -871,7 +849,6 @@ fun MemoEditorDialog(
                             }
                         }
 
-                        // 본문 텍스트 & 다채색 드로잉 캔버스 영역
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             if (currentTheme.hasLines) {
                                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -902,8 +879,9 @@ fun MemoEditorDialog(
                                 textStyle = TextStyle(
                                     fontSize = memoFontSize.sp,
                                     color = currentTheme.textColor,
-                                    fontFamily = getStyledFontFamily(currentFont, isBold, isItalic),
-                                    textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.25f) else null,
+                                    fontFamily = currentFont.family,
+                                    fontWeight = if (isBold) FontWeight.ExtraBold else currentFont.baseWeight,
+                                    textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.28f) else null,
                                     textDecoration = activeDecor,
                                     lineHeight = (memoFontSize + 8).sp
                                 ),
@@ -919,8 +897,9 @@ fun MemoEditorDialog(
                                             style = TextStyle(
                                                 color = currentTheme.textColor.copy(alpha = 0.4f),
                                                 fontSize = memoFontSize.sp,
-                                                fontFamily = getStyledFontFamily(currentFont, isBold, isItalic),
-                                                textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.25f) else null
+                                                fontFamily = currentFont.family,
+                                                fontWeight = if (isBold) FontWeight.ExtraBold else currentFont.baseWeight,
+                                                textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.28f) else null
                                             )
                                         )
                                     }
@@ -928,7 +907,6 @@ fun MemoEditorDialog(
                                 }
                             )
 
-                            // 드로잉 캔버스: 각 획(Stroke)별 고유 컬러 적용
                             Canvas(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -948,7 +926,6 @@ fun MemoEditorDialog(
                                                 },
                                                 onDragEnd = {
                                                     if (currentStrokePoints.isNotEmpty()) {
-                                                        // [핵심] 현재 선택된 획별 색상과 굵기로 독립 저장
                                                         strokes.add(NormStroke(currentStrokePoints, selectedDrawColorHex, selectedPenWidth))
                                                         currentStrokePoints = emptyList()
                                                     }
@@ -1012,21 +989,17 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // [신규] 사진(Image 18) 스타일의 다크 플로팅 드로잉 팔레트 UI
-                    AnimatedVisibility(
-                        visible = isPenMode && showDrawingPalette,
-                        enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
-                        exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 }),
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 60.dp, start = 12.dp, end = 12.dp)
-                            .zIndex(10f)
-                    ) {
+                    // 다크 플로팅 드로잉 팔레트 UI (컴파일러 스코프 충돌 완전 해결)
+                    if (isPenMode && showDrawingPalette) {
                         Card(
                             shape = RoundedCornerShape(24.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF232528)),
                             elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 60.dp, start = 12.dp, end = 12.dp)
+                                .fillMaxWidth()
+                                .zIndex(10f)
                         ) {
                             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Row(
@@ -1036,7 +1009,6 @@ fun MemoEditorDialog(
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("드로잉 펜 도구", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                        // 펜 굵기/색상 실시간 프리뷰 선
                                         Box(
                                             modifier = Modifier
                                                 .width(44.dp)
@@ -1053,7 +1025,6 @@ fun MemoEditorDialog(
                                     }
                                 }
 
-                                // 펜 굵기 프리셋 바 (사진 참조)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1078,7 +1049,6 @@ fun MemoEditorDialog(
                                     }
                                 }
 
-                                // 10색 컬러 팔레트 칩 (사진 참조: 체크마크 배지)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
