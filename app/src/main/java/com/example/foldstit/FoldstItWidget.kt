@@ -4,6 +4,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -14,6 +15,7 @@ import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.*
@@ -26,19 +28,25 @@ class FoldstItWidget : GlanceAppWidget() {
 
     companion object {
         private val SQUARE_SIZE = DpSize(100.dp, 100.dp)
-        private val WIDE_SIZE = DpSize(220.dp, 100.dp)
-        private val LARGE_SIZE = DpSize(220.dp, 220.dp)
+        private val WIDE_SIZE = DpSize(200.dp, 100.dp)
+        private val LARGE_SIZE = DpSize(200.dp, 200.dp)
 
         fun notifyUpdate(context: Context) {
-            val appWidgetManager = AppWidgetManager.getInstance(context)
-            val componentName = ComponentName(context, FoldstItWidgetReceiver::class.java)
-            val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
+            try {
+                val appWidgetManager = AppWidgetManager.getInstance(context)
+                val componentName = ComponentName(context, FoldstItWidgetReceiver::class.java)
+                val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
 
-            val intent = Intent(context, FoldstItWidgetReceiver::class.java).apply {
-                action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, appWidgetIds)
+                if (appWidgetIds.isNotEmpty()) {
+                    val intent = Intent(context, FoldstItWidgetReceiver::class.java).apply {
+                        action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, appWidgetIds)
+                    }
+                    context.sendBroadcast(intent)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-            context.sendBroadcast(intent)
         }
     }
 
@@ -54,60 +62,64 @@ class FoldstItWidget : GlanceAppWidget() {
             val fontSizePref = prefs.getInt("fontSize", 18)
             val hasDrawing = prefs.getBoolean("hasDrawing", false)
 
-            val themeColor = when (themeName) {
-                "BLUE" -> "#E1F5FE"
-                "GREEN" -> "#E8F5E9"
-                "PURPLE" -> "#F3E5F5"
-                "PEACH" -> "#FFE0B2"
-                else -> "#FFF9C4"
+            // Compose Color 직접 지정 (Resources$NotFoundException 크래시 방지)
+            val backgroundColor = when (themeName) {
+                "BLUE" -> Color(0xFFE1F5FE)
+                "GREEN" -> Color(0xFFE8F5E9)
+                "PURPLE" -> Color(0xFFF3E5F5)
+                "PEACH" -> Color(0xFFFFE0B2)
+                else -> Color(0xFFFFF9C4)
             }
 
             val memoText = when {
+                text.isNotEmpty() && hasDrawing -> "$text\n\n[✍️ 필기 포함]"
                 text.isNotEmpty() -> text
-                hasDrawing -> "[✍️ 손글씨 메모 포함]"
-                else -> "작성된 메모가 없습니다."
+                hasDrawing -> "[✍️ 손글씨 필기 메모]"
+                else -> "터치하여 포스트잇 메모를 작성하세요 📌"
             }
 
-            val widgetFontSize = (fontSizePref - 3).coerceAtLeast(12)
+            val widgetFontSize = (fontSizePref - 3).coerceAtLeast(13)
 
-            Column(
+            // 3M 포스트잇 모양 (라운드 코너 + 패딩 + 클릭 시 앱 실행)
+            Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
-                    .background(ColorProvider(android.graphics.Color.parseColor(themeColor)))
+                    .cornerRadius(16.dp)
+                    .background(backgroundColor)
+                    .clickable(actionStartActivity<MainActivity>())
                     .padding(14.dp)
-                    .clickable(actionStartActivity<MainActivity>()),
-                verticalAlignment = Alignment.Top,
-                horizontalAlignment = Alignment.Start
             ) {
-                Row(
-                    modifier = GlanceModifier.fillMaxWidth().padding(bottom = 6.dp),
-                    horizontalAlignment = Alignment.End,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = GlanceModifier.fillMaxSize(),
+                    verticalAlignment = Alignment.Top,
+                    horizontalAlignment = Alignment.Start
                 ) {
-                    if (hasDrawing) {
+                    // 상단 헤더
+                    Row(
+                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 6.dp),
+                        horizontalAlignment = Alignment.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "✍️ ",
-                            style = TextStyle(fontSize = 11.sp)
+                            text = "Foldst it 📌",
+                            style = TextStyle(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ColorProvider(Color(0xFF795548))
+                            )
                         )
                     }
+
+                    // 본문 메모 텍스트
                     Text(
-                        text = "Foldst it 📌",
+                        text = memoText,
                         style = TextStyle(
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ColorProvider(android.graphics.Color.parseColor("#795548"))
-                        )
+                            fontSize = widgetFontSize.sp,
+                            color = ColorProvider(Color(0xFF2C2C2C))
+                        ),
+                        maxLines = 10
                     )
                 }
-
-                Text(
-                    text = memoText,
-                    style = TextStyle(
-                        fontSize = widgetFontSize.sp,
-                        color = ColorProvider(android.graphics.Color.parseColor("#2C2C2C"))
-                    ),
-                    maxLines = 8
-                )
             }
         }
     }
