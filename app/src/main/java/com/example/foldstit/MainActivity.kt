@@ -24,9 +24,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -83,7 +85,7 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935), true)
 }
 
-// 엄선된 무료 한글 10종 서체 (가독성/범용성/디자인성 극대화)
+// 엄선된 무료 한글 10종 서체 규격
 enum class MemoFont(val title: String, val downloadUrl: String, val fallbackFamily: FontFamily) {
     DEFAULT("내 폰 기본체", "", FontFamily.Default),
     PRETENDARD("프리텐다드", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard/packages/pretendard/dist/public/static/Pretendard-Regular.otf", FontFamily.SansSerif),
@@ -218,11 +220,9 @@ fun PegboardScreen(
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedMemoIds = remember { mutableStateListOf<String>() }
 
-    // 순차 위젯 등록 큐 상태
     var widgetQueue by remember { mutableStateOf<List<MemoItem>>(emptyList()) }
     var currentQueueIndex by remember { mutableStateOf(0) }
 
-    // 펄럭이는(Fluttering) 바람 효과 애니메이션 상태
     var flutteringMemoId by remember { mutableStateOf<String?>(null) }
     val flutterAnim = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
@@ -457,7 +457,7 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 온전한 원형 핀 (상단 여백 8dp, 잘림 없음)
+                    // 온전한 원형 핀
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -535,7 +535,6 @@ fun PegboardScreen(
             }
         }
 
-        // 다중 선택 액션 바
         if (isSelectionMode) {
             Card(
                 shape = RoundedCornerShape(32.dp),
@@ -642,7 +641,6 @@ fun PegboardScreen(
         }
     }
 
-    // 위젯 순차 등록 안내 다이얼로그 (안드로이드 런처 충돌 완전 차단)
     if (widgetQueue.isNotEmpty() && currentQueueIndex < widgetQueue.size) {
         val currentTarget = widgetQueue[currentQueueIndex]
         AlertDialog(
@@ -722,7 +720,6 @@ fun MemoEditorDialog(
     var currentPenWidth by remember { mutableStateOf(memo.penWidth) }
     var memoFontSize by remember { mutableStateOf(memo.fontSize) }
 
-    // 엑셀 스타일 서식 버튼 상태 (개별 메모 전용)
     var isBold by remember { mutableStateOf(memo.isBold) }
     var isItalic by remember { mutableStateOf(memo.isItalic) }
     var isUnderline by remember { mutableStateOf(memo.isUnderline) }
@@ -758,7 +755,6 @@ fun MemoEditorDialog(
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f)
             ) {
                 Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
-                    // 상단 헤더: 펜/키보드 모드 + 엑셀식 서식 버튼(B, I, U, S) + 설정
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -772,7 +768,6 @@ fun MemoEditorDialog(
                                 Icon(Icons.Default.Create, contentDescription = "Pen", tint = if (isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
                             }
 
-                            // 엑셀 스타일 [B] [I] [U] [S] 버튼
                             TextButton(
                                 onClick = { isBold = !isBold },
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
@@ -826,7 +821,6 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // 메모 설정 패널 (10대 엄선 폰트 + 펜 굵기 + 테마)
                     AnimatedVisibility(visible = showMemoSettings) {
                         Card(
                             shape = RoundedCornerShape(8.dp),
@@ -853,11 +847,11 @@ fun MemoEditorDialog(
                                 }
 
                                 Text("추천 한글 폰트 10선", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                androidx.compose.foundation.lazy.LazyRow(
+                                LazyRow(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    items(MemoFont.values().toList()) { f ->
+                                    items(MemoFont.values().toList(), key = { it.name }) { f: MemoFont ->
                                         OutlinedButton(
                                             onClick = { currentFont = f },
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
