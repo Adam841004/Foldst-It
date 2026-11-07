@@ -1,7 +1,14 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.example.foldstit
 
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Paint
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -12,7 +19,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -35,8 +46,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.CoroutineScope
@@ -44,327 +58,276 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
 
-enum class PastelTheme(val color: Color, val darkColor: Color, val hex: String) {
-    YELLOW(Color(0xFFFFF9C4), Color(0xFFFBC02D), "#FFF9C4"),
-    BLUE(Color(0xFFE1F5FE), Color(0xFF03A9F4), "#E1F5FE"),
-    GREEN(Color(0xFFE8F5E9), Color(0xFF4CAF50), "#E8F5E9"),
-    PURPLE(Color(0xFFF3E5F5), Color(0xFFAB47BC), "#F3E5F5"),
-    PEACH(Color(0xFFFFE0B2), Color(0xFFFF9800), "#FFE0B2")
+// 메모지 테마 규격
+enum class NoteTheme(val title: String, val bgColor: Color, val textColor: Color, val pinColor: Color) {
+    POSTIT_YELLOW("노랑 포스트잇", Color(0xFFFFF176), Color(0xFF212121), Color(0xFF1E88E5)),
+    POSTIT_BLUE("파랑 포스트잇", Color(0xFF81D4FA), Color(0xFF212121), Color(0xFFE53935)),
+    NOTEBOOK("연습장 줄노트", Color(0xFFFAFAFA), Color(0xFF1A237E), Color(0xFF43A047)),
+    BLACK_PAPER("흑지(다크)", Color(0xFF263238), Color(0xFFECEFF1), Color(0xFFFFB300)),
+    WHITE_PAPER("백지(클린)", Color(0xFFFFFFFF), Color(0xFF212121), Color(0xFFE91E63))
 }
 
-data class DrawPath(val points: List<Offset>, val hexColor: String = "#2C2C2C", val strokeWidth: Float = 6f)
+data class DrawPoint(val x: Float, val y: Float)
+data class DrawStroke(val points: List<DrawPoint>, val colorHex: String = "#212121", val width: Float = 5f)
 
-enum class InputMode { KEYBOARD, PEN }
+data class MemoItem(
+    val id: String = UUID.randomUUID().toString(),
+    var text: String = "",
+    var theme: NoteTheme = NoteTheme.POSTIT_YELLOW,
+    val strokes: MutableList<DrawStroke> = mutableListOf(),
+    var updatedAt: Long = System.currentTimeMillis()
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFDDDDDD)) {
-                    FoldstItEditor(context = this)
-                }
+                PegboardScreen(
+                    context = this,
+                    onPinWidget = { memo -> requestPinWidget(memo) }
+                )
             }
+        }
+    }
+
+    // 안드로이드 홈 화면에 특정 메모 위젯 즉시 박제 (롱클릭 시 호출)
+    private fun requestPinWidget(memo: MemoItem) {
+        val appWidgetManager = AppWidgetManager.getInstance(this)
+        val myProvider = ComponentName(this, FoldstItWidgetReceiver::class.java)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && appWidgetManager.isRequestPinAppWidgetSupported) {
+            val successCallback = Intent(this, FoldstItWidgetReceiver::class.java).apply {
+                action = "com.example.foldstit.PIN_WIDGET_ASSIGN"
+                putExtra("TARGET_MEMO_ID", memo.id)
+            }
+            val successPendingIntent = PendingIntent.getBroadcast(
+                this, memo.id.hashCode(), successCallback,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+            appWidgetManager.requestPinAppWidget(myProvider, null, successPendingIntent)
+            Toast.makeText(this, "홈 화면에 위젯 추가 창이 열렸습니다.", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "홈 화면에서 위젯을 직접 추가해 주세요.", Toast.LENGTH_SHORT).show()
         }
     }
 }
 
 @Composable
-fun FoldstItEditor(context: Context) {
-    val prefs = remember { context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE) }
-
-    var memoText by remember { mutableStateOf(prefs.getString("text", "") ?: "") }
-    var selectedTheme by remember {
-        val themeName = prefs.getString("theme", "YELLOW") ?: "YELLOW"
-        mutableStateOf(try { PastelTheme.valueOf(themeName) } catch (_: Exception) { PastelTheme.YELLOW })
-    }
-    var inputMode by remember { mutableStateOf(InputMode.KEYBOARD) }
-    var fontSize by remember { mutableStateOf(prefs.getInt("fontSize", 18)) }
-
-    // 메뉴 상태 관리
+fun PegboardScreen(context: Context, onPinWidget: (MemoItem) -> Unit) {
+    val prefs = remember { context.getSharedPreferences("foldstit_board", Context.MODE_PRIVATE) }
+    val memoList = remember { mutableStateListOf<MemoItem>() }
+    var editingMemo by remember { mutableStateOf<MemoItem?>(null) }
     var isDockExpanded by remember { mutableStateOf(true) }
-    var showSettingsMenu by remember { mutableStateOf(false) }
-    var showThemeDialog by remember { mutableStateOf(false) }
-    var showFontDialog by remember { mutableStateOf(false) }
 
-    val paths = remember { mutableStateListOf<DrawPath>() }
-    val undoStack = remember { mutableStateListOf<DrawPath>() }
-    var currentPathPoints by remember { mutableStateOf(listOf<Offset>()) }
-
-    val focusRequester = remember { FocusRequester() }
-
-    // [중요] 드로잉 선 데이터 완전 복원 로직
-    LaunchedEffect(Unit) {
-        val pathsJsonStr = prefs.getString("paths_json", null)
-        if (!pathsJsonStr.isNullOrEmpty()) {
+    // 다중 메모 로드
+    fun loadMemos() {
+        memoList.clear()
+        val jsonStr = prefs.getString("memo_list_json", null)
+        if (!jsonStr.isNullOrEmpty()) {
             try {
-                val array = JSONArray(pathsJsonStr)
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    val ptsArray = obj.getJSONArray("points")
-                    val pts = mutableListOf<Offset>()
-                    for (j in 0 until ptsArray.length()) {
-                        val p = ptsArray.getJSONObject(j)
-                        pts.add(Offset(p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
+                val arr = JSONArray(jsonStr)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val themeName = obj.optString("theme", NoteTheme.POSTIT_YELLOW.name)
+                    val memo = MemoItem(
+                        id = obj.getString("id"),
+                        text = obj.optString("text", ""),
+                        theme = try { NoteTheme.valueOf(themeName) } catch (_: Exception) { NoteTheme.POSTIT_YELLOW },
+                        updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+                    )
+                    val strokesArr = obj.optJSONArray("strokes")
+                    if (strokesArr != null) {
+                        for (j in 0 until strokesArr.length()) {
+                            val sObj = strokesArr.getJSONObject(j)
+                            val ptsArr = sObj.getJSONArray("points")
+                            val pts = mutableListOf<DrawPoint>()
+                            for (k in 0 until ptsArr.length()) {
+                                val p = ptsArr.getJSONObject(k)
+                                pts.add(DrawPoint(p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
+                            }
+                            memo.strokes.add(DrawStroke(pts, sObj.optString("color", "#212121"), sObj.optDouble("width", 5.0).toFloat()))
+                        }
                     }
-                    paths.add(DrawPath(pts, obj.optString("color", "#2C2C2C"), obj.optDouble("width", 6.0).toFloat()))
+                    memoList.add(memo)
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
-    LaunchedEffect(inputMode) {
-        if (inputMode == InputMode.KEYBOARD) {
-            try { focusRequester.requestFocus() } catch (_: Exception) {}
-        }
-    }
-
-    // [중요] 텍스트 및 드로잉 선 직렬화 저장 로직
-    fun saveData(showToast: Boolean = false) {
+    // 메모 전체 영구 저장 & 위젯용 비트맵 렌더링
+    fun saveAllMemos() {
         try {
-            val pathsArray = JSONArray()
-            paths.forEach { drawPath ->
-                val pathObj = JSONObject().apply {
-                    put("color", drawPath.hexColor)
-                    put("width", drawPath.strokeWidth)
-                    val pointsArray = JSONArray()
-                    drawPath.points.forEach { pt ->
-                        pointsArray.put(JSONObject().apply {
-                            put("x", pt.x)
-                            put("y", pt.y)
-                        })
+            val arr = JSONArray()
+            memoList.forEach { memo ->
+                val obj = JSONObject().apply {
+                    put("id", memo.id)
+                    put("text", memo.text)
+                    put("theme", memo.theme.name)
+                    put("updatedAt", memo.updatedAt)
+                    val sArr = JSONArray()
+                    memo.strokes.forEach { stroke ->
+                        val strokeObj = JSONObject().apply {
+                            put("color", stroke.colorHex)
+                            put("width", stroke.width)
+                            val pArr = JSONArray()
+                            stroke.points.forEach { pt ->
+                                pArr.put(JSONObject().apply {
+                                    put("x", pt.x)
+                                    put("y", pt.y)
+                                })
+                            }
+                            put("points", pArr)
+                        }
+                        sArr.put(strokeObj)
                     }
-                    put("points", pointsArray)
+                    put("strokes", sArr)
                 }
-                pathsArray.put(pathObj)
-            }
+                arr.put(obj)
 
-            prefs.edit().apply {
-                putString("text", memoText)
-                putString("theme", selectedTheme.name)
-                putInt("fontSize", fontSize)
-                putBoolean("hasDrawing", paths.isNotEmpty())
-                putString("paths_json", pathsArray.toString()) // 좌표 데이터 영구 보관
-                apply()
+                // 위젯용 드로잉 비트맵 생성 캐싱
+                if (memo.strokes.isNotEmpty()) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val bmp = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(bmp)
+                            val paint = Paint().apply {
+                                isAntiAlias = true
+                                style = Paint.Style.STROKE
+                                strokeCap = Paint.Cap.ROUND
+                                strokeJoin = Paint.Join.ROUND
+                            }
+                            memo.strokes.forEach { s ->
+                                paint.color = android.graphics.Color.parseColor(s.colorHex)
+                                paint.strokeWidth = s.width
+                                if (s.points.size > 1) {
+                                    val path = android.graphics.Path()
+                                    path.moveTo(s.points[0].x, s.points[0].y)
+                                    for (pt in s.points) { path.lineTo(pt.x, pt.y) }
+                                    canvas.drawPath(path, paint)
+                                }
+                            }
+                            val outFile = File(context.filesDir, "drawing_${memo.id}.png")
+                            FileOutputStream(outFile).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+            prefs.edit().putString("memo_list_json", arr.toString()).apply()
+
+            // 마지막 편집 메모를 기본 위젯용으로도 동기화
+            if (memoList.isNotEmpty()) {
+                val latest = memoList.maxByOrNull { it.updatedAt } ?: memoList.first()
+                val legacyPrefs = context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE)
+                legacyPrefs.edit()
+                    .putString("text", latest.text)
+                    .putString("theme", latest.theme.name)
+                    .putBoolean("hasDrawing", latest.strokes.isNotEmpty())
+                    .putString("latest_memo_id", latest.id)
+                    .apply()
             }
 
             CoroutineScope(Dispatchers.IO).launch {
                 FoldstItWidget().updateAll(context)
                 FoldstItWidget.notifyUpdate(context)
             }
-
-            if (showToast) {
-                Toast.makeText(context, "메모가 안전하게 저장되었습니다.", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // 1. 메인 포스트잇 메모 캔버스 영역
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 90.dp)
-                .shadow(elevation = 6.dp, shape = RoundedCornerShape(12.dp))
-                .clip(RoundedCornerShape(12.dp))
-                .background(selectedTheme.color)
-                .padding(20.dp)
-        ) {
-            // 레이어 A: 텍스트 입력창
-            BasicTextField(
-                value = memoText,
-                onValueChange = {
-                    memoText = it
-                    saveData(false)
-                },
-                textStyle = TextStyle(
-                    fontSize = fontSize.sp,
-                    color = Color(0xFF2C2C2C),
-                    fontFamily = FontFamily.SansSerif,
-                    lineHeight = (fontSize + 8).sp
-                ),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .focusRequester(focusRequester)
-                    .zIndex(if (inputMode == InputMode.KEYBOARD) 2f else 0f),
-                enabled = (inputMode == InputMode.KEYBOARD),
-                decorationBox = { innerTextField ->
-                    if (memoText.isEmpty() && paths.isEmpty()) {
-                        Text(
-                            "터치하여 메모를 입력하거나, 하단 독의 펜 모드로 손글씨를 작성하세요...",
-                            color = Color.Black.copy(alpha = 0.35f),
-                            fontSize = fontSize.sp
-                        )
-                    }
-                    innerTextField()
-                }
-            )
+    LaunchedEffect(Unit) { loadMemos() }
 
-            // 레이어 B: 드로잉 캔버스
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(if (inputMode == InputMode.PEN) 2f else 1f)
-                    .pointerInput(inputMode) {
-                        if (inputMode == InputMode.PEN) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    undoStack.clear()
-                                    currentPathPoints = listOf(offset)
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    currentPathPoints = currentPathPoints + change.position
-                                },
-                                onDragEnd = {
-                                    if (currentPathPoints.isNotEmpty()) {
-                                        paths.add(DrawPath(currentPathPoints))
-                                        currentPathPoints = emptyList()
-                                        saveData(false)
-                                    }
-                                }
-                            )
-                        }
-                    }
-            ) {
-                paths.forEach { drawPath ->
-                    if (drawPath.points.size > 1) {
-                        val path = Path().apply {
-                            moveTo(drawPath.points.first().x, drawPath.points.first().y)
-                            for (point in drawPath.points) { lineTo(point.x, point.y) }
-                        }
-                        drawPath(
-                            path = path,
-                            color = Color(android.graphics.Color.parseColor(drawPath.hexColor)),
-                            style = Stroke(width = drawPath.strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-                    }
-                }
-
-                if (currentPathPoints.size > 1) {
-                    val path = Path().apply {
-                        moveTo(currentPathPoints.first().x, currentPathPoints.first().y)
-                        for (point in currentPathPoints) { lineTo(point.x, point.y) }
-                    }
-                    drawPath(
-                        path = path,
-                        color = Color(0xFF2C2C2C),
-                        style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+    // 타공판 / 벽면 배경 화면 (Pegboard)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFD6D6D6)) // 타공판 베이스 그레이톤
+    ) {
+        // 미세한 타공판 패턴 캔버스
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val step = 32.dp.toPx()
+            for (x in 0..(size.width / step).toInt()) {
+                for (y in 0..(size.height / step).toInt()) {
+                    drawCircle(
+                        color = Color.Black.copy(alpha = 0.06f),
+                        radius = 2.5.dp.toPx(),
+                        center = Offset(x * step + 16.dp.toPx(), y * step + 16.dp.toPx())
                     )
                 }
             }
         }
 
-        // 2. 우측 하단 계층형 설정 팝업 메뉴 (Image 2 레이아웃 반영)
-        AnimatedVisibility(
-            visible = showSettingsMenu,
-            enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
-            exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 }),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = 80.dp)
+        // 벽면에 꽂힌 포스트잇 그리드 목록
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 150.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 28.dp, bottom = 96.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.fillMaxSize()
         ) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalAlignment = Alignment.End
-            ) {
-                // Tier 1 (상단 카드): Go Pro / About / Background
-                Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            items(memoList, key = { it.id }) { memo ->
+                // 단일 포스트잇 카드
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .shadow(elevation = 6.dp, shape = RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(memo.theme.bgColor)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { editingMemo = memo },
+                                onLongPress = {
+                                    onPinWidget(memo)
+                                }
+                            )
+                        }
+                        .padding(12.dp)
                 ) {
-                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { showFontDialog = true }) {
-                            Icon(Icons.Default.TextFields, contentDescription = "Font", tint = Color.Black, modifier = Modifier.size(22.dp))
-                            Text("Font", fontSize = 10.sp, color = Color.Gray)
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                            Toast.makeText(context, "Foldst it v2.0 (S-Pen & Widget)", Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(Icons.Default.Info, contentDescription = "About", tint = Color.Black, modifier = Modifier.size(22.dp))
-                            Text("About", fontSize = 10.sp, color = Color.Gray)
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { showThemeDialog = true }) {
-                            Icon(Icons.Default.Palette, contentDescription = "Background", tint = Color.Black, modifier = Modifier.size(22.dp))
-                            Text("Theme", fontSize = 10.sp, color = Color.Gray)
-                        }
-                    }
-                }
+                    // 상단 중앙 압정 핀 (Pin)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(y = (-6).dp)
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(memo.theme.pinColor)
+                            .border(1.5.dp, Color.White.copy(alpha = 0.8f), CircleShape)
+                    )
 
-                // Tier 2 (중간 카드): Backup / Restore
-                Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
-                ) {
-                    Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                            saveData(true)
-                        }) {
-                            Icon(Icons.Default.Save, contentDescription = "Backup", tint = Color.Black, modifier = Modifier.size(22.dp))
-                            Text("Backup", fontSize = 10.sp, color = Color.Gray)
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                            Toast.makeText(context, "동기화 복원 완료", Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(Icons.Default.Restore, contentDescription = "Restore", tint = Color.Black, modifier = Modifier.size(22.dp))
-                            Text("Restore", fontSize = 10.sp, color = Color.Gray)
-                        }
-                    }
-                }
-
-                // Tier 3 (하단 카드): Trash / Undo / Redo / Mode Toggle
-                Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
-                ) {
-                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                            paths.clear()
-                            undoStack.clear()
-                            memoText = ""
-                            saveData(true)
-                        }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Trash", tint = Color(0xFFE53935), modifier = Modifier.size(22.dp))
-                            Text("Clear", fontSize = 10.sp, color = Color.Gray)
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(enabled = paths.isNotEmpty()) {
-                            if (paths.isNotEmpty()) {
-                                undoStack.add(paths.removeAt(paths.size - 1))
-                                saveData(false)
-                            }
-                        }) {
-                            Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (paths.isNotEmpty()) Color.Black else Color.LightGray, modifier = Modifier.size(22.dp))
-                            Text("Undo", fontSize = 10.sp, color = Color.Gray)
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(enabled = undoStack.isNotEmpty()) {
-                            if (undoStack.isNotEmpty()) {
-                                paths.add(undoStack.removeAt(undoStack.size - 1))
-                                saveData(false)
-                            }
-                        }) {
-                            Icon(Icons.Default.Redo, contentDescription = "Redo", tint = if (undoStack.isNotEmpty()) Color.Black else Color.LightGray, modifier = Modifier.size(22.dp))
-                            Text("Redo", fontSize = 10.sp, color = Color.Gray)
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                            inputMode = if (inputMode == InputMode.KEYBOARD) InputMode.PEN else InputMode.KEYBOARD
-                        }) {
-                            Icon(if (inputMode == InputMode.KEYBOARD) Icons.Default.Create else Icons.Default.Keyboard, contentDescription = "Mode", tint = Color.Black, modifier = Modifier.size(22.dp))
-                            Text(if (inputMode == InputMode.KEYBOARD) "Pen" else "Text", fontSize = 10.sp, color = Color.Gray)
-                        }
-                    }
+                    // 포스트잇 내부 메모 텍스트 미리보기
+                    Text(
+                        text = memo.text.ifEmpty { if (memo.strokes.isNotEmpty()) "[✍️ 드로잉 메모]" else "빈 메모" },
+                        style = TextStyle(
+                            fontSize = 13.sp,
+                            color = memo.theme.textColor,
+                            fontFamily = FontFamily.SansSerif,
+                            lineHeight = 18.sp
+                        ),
+                        maxLines = 6,
+                        modifier = Modifier.padding(top = 10.dp)
+                    )
                 }
             }
         }
 
-        // 3. 우측 하단 캡슐형 플로팅 독 (Image 1 레이아웃 반영)
+        // 빈 상태 안내문
+        if (memoList.isEmpty()) {
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(Icons.Default.PushPin, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(48.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("타공판에 붙은 포스트잇이 없습니다.", color = Color.Gray, fontSize = 14.sp)
+                Text("하단 독의 + Note를 눌러 새 메모를 붙여보세요!", color = Color.DarkGray, fontSize = 12.sp)
+            }
+        }
+
+        // 우측 하단 플로팅 독 (Floating Dock)
         Card(
             shape = RoundedCornerShape(32.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -376,9 +339,8 @@ fun FoldstItEditor(context: Context) {
             Row(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // 접기/펼치기 화살표
                 IconButton(
                     onClick = { isDockExpanded = !isDockExpanded },
                     modifier = Modifier.size(32.dp)
@@ -391,102 +353,236 @@ fun FoldstItEditor(context: Context) {
                 }
 
                 if (isDockExpanded) {
-                    // Note (텍스트 모드)
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                        inputMode = InputMode.KEYBOARD
-                        showSettingsMenu = false
-                    }) {
-                        Icon(Icons.Default.Article, contentDescription = "Note", tint = if (inputMode == InputMode.KEYBOARD) Color(0xFF1976D2) else Color.Black, modifier = Modifier.size(24.dp))
-                        Text("Note", fontSize = 10.sp, color = Color.DarkGray)
+                    // + Note (새 포스트잇 생성)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable {
+                            val newMemo = MemoItem(text = "")
+                            memoList.add(0, newMemo)
+                            saveAllMemos()
+                            editingMemo = newMemo
+                        }
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "New", tint = Color(0xFF1976D2), modifier = Modifier.size(24.dp))
+                        Text("New", fontSize = 10.sp, color = Color.DarkGray)
                     }
 
-                    // Pen/Draw (손글씨 모드)
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                        inputMode = InputMode.PEN
-                        showSettingsMenu = false
-                    }) {
-                        Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "Folder", tint = if (inputMode == InputMode.PEN) Color(0xFF1976D2) else Color.Black, modifier = Modifier.size(24.dp))
-                        Text("Draw", fontSize = 10.sp, color = Color.DarkGray)
-                    }
-
-                    // Save (저장)
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                        saveData(true)
-                    }) {
-                        Icon(Icons.Default.Save, contentDescription = "Save", tint = Color.Black, modifier = Modifier.size(24.dp))
-                        Text("Save", fontSize = 10.sp, color = Color.DarkGray)
-                    }
-
-                    // Settings (설정 메뉴 토글)
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                        showSettingsMenu = !showSettingsMenu
-                    }) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = if (showSettingsMenu) Color(0xFF1976D2) else Color.Black,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Text("Settings", fontSize = 10.sp, color = Color.DarkGray)
+                    // Backup (전체 저장 동기화)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable {
+                            saveAllMemos()
+                            Toast.makeText(context, "타공판 상태가 위젯과 동기화되었습니다.", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(Icons.Default.CloudSync, contentDescription = "Sync", tint = Color.Black, modifier = Modifier.size(24.dp))
+                        Text("Sync", fontSize = 10.sp, color = Color.DarkGray)
                     }
                 }
             }
         }
     }
 
-    // 테마 색상 선택 다이얼로그
-    if (showThemeDialog) {
-        AlertDialog(
-            onDismissRequest = { showThemeDialog = false },
-            title = { Text("배경 테마 선택") },
-            text = {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                    PastelTheme.values().forEach { theme ->
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(theme.color)
-                                .border(
-                                    width = if (selectedTheme == theme) 3.dp else 1.dp,
-                                    color = if (selectedTheme == theme) theme.darkColor else Color.Gray.copy(alpha = 0.4f),
-                                    shape = CircleShape
-                                )
-                                .clickable {
-                                    selectedTheme = theme
-                                    saveData(false)
-                                    showThemeDialog = false
-                                }
-                        )
-                    }
+    // 포스트잇 상세 편집기 다이얼로그 (탭 시 열림)
+    editingMemo?.let { targetMemo ->
+        MemoEditorDialog(
+            memo = targetMemo,
+            onDismiss = { editingMemo = null },
+            onSave = { updated ->
+                val index = memoList.indexOfFirst { it.id == updated.id }
+                if (index != -1) {
+                    memoList[index] = updated.copy(updatedAt = System.currentTimeMillis())
                 }
+                saveAllMemos()
+                editingMemo = null
             },
-            confirmButton = { TextButton(onClick = { showThemeDialog = false }) { Text("닫기") } }
+            onDelete = { deletedId ->
+                memoList.removeAll { it.id == deletedId }
+                saveAllMemos()
+                editingMemo = null
+            }
         )
     }
+}
 
-    // 폰트 크기 조절 다이얼로그
-    if (showFontDialog) {
-        AlertDialog(
-            onDismissRequest = { showFontDialog = false },
-            title = { Text("글꼴 크기 조절") },
-            text = {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    listOf(14 to "작게", 18 to "보통", 22 to "크게").forEach { (sz, label) ->
-                        OutlinedButton(
-                            onClick = {
-                                fontSize = sz
-                                saveData(false)
-                                showFontDialog = false
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (fontSize == sz) Color(0xFFE0E0E0) else Color.Transparent)
+@Composable
+fun MemoEditorDialog(
+    memo: MemoItem,
+    onDismiss: () -> Unit,
+    onSave: (MemoItem) -> Unit,
+    onDelete: (String) -> Unit
+) {
+    var memoText by remember { mutableStateOf(memo.text) }
+    var currentTheme by remember { mutableStateOf(memo.theme) }
+    var isPenMode by remember { mutableStateOf(false) }
+
+    val strokes = remember { mutableStateListOf<DrawStroke>().apply { addAll(memo.strokes) } }
+    val undoStack = remember { mutableStateListOf<DrawStroke>() }
+    var currentStrokePoints by remember { mutableStateOf(listOf<DrawPoint>()) }
+
+    val focusRequester = remember { FocusRequester() }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .padding(20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = currentTheme.bgColor),
+                elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                    // 상단 헤더 툴바
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 펜/키보드 전환 및 Undo
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            IconButton(onClick = { isPenMode = false }) {
+                                Icon(Icons.Default.Keyboard, contentDescription = "Text", tint = if (!isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
+                            }
+                            IconButton(onClick = { isPenMode = true }) {
+                                Icon(Icons.Default.Create, contentDescription = "Pen", tint = if (isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
+                            }
+                            IconButton(
+                                onClick = {
+                                    if (strokes.isNotEmpty()) {
+                                        undoStack.add(strokes.removeAt(strokes.size - 1))
+                                    }
+                                },
+                                enabled = strokes.isNotEmpty()
+                            ) {
+                                Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (strokes.isNotEmpty()) currentTheme.textColor else Color.Gray)
+                            }
+                            IconButton(onClick = { onDelete(memo.id) }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.7f))
+                            }
+                        }
+
+                        // 테마 선택 팔레트
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            NoteTheme.values().forEach { t ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(t.bgColor)
+                                        .border(
+                                            width = if (currentTheme == t) 2.dp else 1.dp,
+                                            color = if (currentTheme == t) t.pinColor else Color.Gray.copy(alpha = 0.4f),
+                                            shape = CircleShape
+                                        )
+                                        .clickable { currentTheme = t }
+                                )
+                            }
+                        }
+                    }
+
+                    // 포스트잇 메모 본문 입력 및 드로잉 영역
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        BasicTextField(
+                            value = memoText,
+                            onValueChange = { memoText = it },
+                            textStyle = TextStyle(fontSize = 18.sp, color = currentTheme.textColor, lineHeight = 26.sp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .focusRequester(focusRequester)
+                                .zIndex(if (!isPenMode) 2f else 0f),
+                            enabled = !isPenMode,
+                            decorationBox = { innerTextField ->
+                                if (memoText.isEmpty() && strokes.isEmpty()) {
+                                    Text("메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...", color = currentTheme.textColor.copy(alpha = 0.4f), fontSize = 16.sp)
+                                }
+                                innerTextField()
+                            }
+                        )
+
+                        // 손글씨 필기 캔버스
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(if (isPenMode) 2f else 1f)
+                                .pointerInput(isPenMode) {
+                                    if (isPenMode) {
+                                        detectDragGestures(
+                                            onDragStart = { offset ->
+                                                undoStack.clear()
+                                                currentStrokePoints = listOf(DrawPoint(offset.x, offset.y))
+                                            },
+                                            onDrag = { change, _ ->
+                                                change.consume()
+                                                currentStrokePoints = currentStrokePoints + DrawPoint(change.position.x, change.position.y)
+                                            },
+                                            onDragEnd = {
+                                                if (currentStrokePoints.isNotEmpty()) {
+                                                    val strokeColor = if (currentTheme == NoteTheme.BLACK_PAPER) "#ECEFF1" else "#212121"
+                                                    strokes.add(DrawStroke(currentStrokePoints, strokeColor, 5f))
+                                                    currentStrokePoints = emptyList()
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
                         ) {
-                            Text(label, color = Color.Black)
+                            strokes.forEach { s ->
+                                if (s.points.size > 1) {
+                                    val path = Path().apply {
+                                        moveTo(s.points.first().x, s.points.first().y)
+                                        for (p in s.points) { lineTo(p.x, p.y) }
+                                    }
+                                    drawPath(
+                                        path = path,
+                                        color = Color(android.graphics.Color.parseColor(s.colorHex)),
+                                        style = Stroke(width = s.width, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                    )
+                                }
+                            }
+                            if (currentStrokePoints.size > 1) {
+                                val path = Path().apply {
+                                    moveTo(currentStrokePoints.first().x, currentStrokePoints.first().y)
+                                    for (p in currentStrokePoints) { lineTo(p.x, p.y) }
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = if (currentTheme == NoteTheme.BLACK_PAPER) Color.White else Color(0xFF212121),
+                                    style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                            }
+                        }
+                    }
+
+                    // 하단 저장 / 닫기 바
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("닫기", color = currentTheme.textColor) }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                memo.text = memoText
+                                memo.theme = currentTheme
+                                memo.strokes.clear()
+                                memo.strokes.addAll(strokes)
+                                onSave(memo)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                        ) {
+                            Text("완료 및 저장", color = Color.White)
                         }
                     }
                 }
-            },
-            confirmButton = { TextButton(onClick = { showFontDialog = false }) { Text("닫기") } }
-        )
+            }
+        }
     }
 }
