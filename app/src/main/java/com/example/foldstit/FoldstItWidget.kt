@@ -19,46 +19,55 @@ import java.io.File
 class FoldstItWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
-            // 로컬 데이터 로드
-            var memoText = "작성된 메모가 없습니다."
-            var themeColor = "#FFF9C4" // 기본 포스트잇 노랑
-            
+            var memoText = "메모를 작성해주세요."
+            var themeColor = "#FFF9C4"
+            var widgetFontSize = 15
+
             try {
                 val file = File(context.filesDir, "foldstit_data.json")
                 if (file.exists()) {
                     val json = JSONObject(file.readText())
                     val text = json.optString("text", "").trim()
-                    if (text.isNotEmpty()) {
-                        memoText = text
-                    } else if (json.optJSONArray("paths")?.let { it.length() > 0 } == true) {
-                        memoText = "[손글씨 메모가 포함되어 있습니다]"
+                    val pathsCount = json.optJSONArray("paths")?.length() ?: 0
+
+                    memoText = when {
+                        text.isNotEmpty() && pathsCount > 0 -> "$text\n\n[✍️ 손글씨 포함됨]"
+                        text.isNotEmpty() -> text
+                        pathsCount > 0 -> "[✍️ 손글씨 메모]"
+                        else -> "작성된 메모가 없습니다."
                     }
+
                     val themeName = json.optString("theme", "YELLOW")
                     themeColor = PastelTheme.valueOf(themeName).hex
+                    widgetFontSize = json.optInt("fontSize", 18) - 2
                 }
             } catch (e: Exception) { e.printStackTrace() }
 
-            // 위젯 렌더링 UI
             Column(
                 modifier = GlanceModifier
                     .fillMaxSize()
                     .background(ColorProvider(android.graphics.Color.parseColor(themeColor)))
-                    .padding(12.dp),
+                    .padding(14.dp),
                 verticalAlignment = Alignment.Top,
                 horizontalAlignment = Alignment.Start
             ) {
-                Text(
-                    text = "Foldst it 📌",
-                    style = TextStyle(
-                        fontSize = 12.sp,
-                        color = ColorProvider(android.graphics.Color.parseColor("#757575"))
-                    ),
-                    modifier = GlanceModifier.padding(bottom = 6.dp)
-                )
+                Row(
+                    modifier = GlanceModifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalAlignment = Alignment.End
+                ) {
+                    Text(
+                        text = "Foldst it 📌",
+                        style = TextStyle(
+                            fontSize = 11.sp,
+                            color = ColorProvider(android.graphics.Color.parseColor("#757575"))
+                        )
+                    )
+                }
+
                 Text(
                     text = memoText,
                     style = TextStyle(
-                        fontSize = 15.sp,
+                        fontSize = widgetFontSize.sp,
                         color = ColorProvider(android.graphics.Color.parseColor("#2C2C2C"))
                     )
                 )
