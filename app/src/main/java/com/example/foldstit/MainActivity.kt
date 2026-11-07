@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -47,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,12 +80,21 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFDF9), Color(0xFF1A237E), Color(0xFFD84315), true)
 }
 
-// 갤럭시 시스템 폰트 연동 규격
-enum class MemoFont(val title: String, val family: FontFamily) {
-    SYSTEM_DEFAULT("시스템 기본", FontFamily.Default),     // One UI 설정 글꼴 그대로 반영
-    SYSTEM_SERIF("시스템 명조", FontFamily.Serif),         // 단말기 명조/바탕체
-    SYSTEM_SANS("시스템 고딕", FontFamily.SansSerif),     // 깔끔한 산세리프
-    SYSTEM_MONO("시스템 타자기", FontFamily.Monospace)     // 모노스페이스
+// 안드로이드 OS 네이티브 폰트 연동 (한글 100% 적용)
+enum class MemoFont(val title: String) {
+    SYSTEM_ONEUI("내 폰 설정체"),
+    SYSTEM_SERIF("시스템 명조"),
+    SYSTEM_CASUAL("시스템 캐주얼"),
+    SYSTEM_MONO("시스템 타자기");
+
+    fun toFontFamily(): FontFamily {
+        return when (this) {
+            SYSTEM_SERIF -> FontFamily(Typeface.create("serif", Typeface.NORMAL))
+            SYSTEM_CASUAL -> FontFamily(Typeface.create("casual", Typeface.NORMAL))
+            SYSTEM_MONO -> FontFamily(Typeface.create("monospace", Typeface.NORMAL))
+            else -> FontFamily.Default // One UI 설정 폰트 그대로 상속
+        }
+    }
 }
 
 data class NormPoint(val x: Float, val y: Float)
@@ -93,7 +104,7 @@ data class MemoItem(
     val id: String = UUID.randomUUID().toString(),
     var text: String = "",
     var theme: NoteTheme = NoteTheme.PASTEL_YELLOW,
-    var font: MemoFont = MemoFont.SYSTEM_DEFAULT,
+    var font: MemoFont = MemoFont.SYSTEM_ONEUI,
     var fontSize: Int = 16,
     var penWidth: Float = 5f,
     val strokes: MutableList<NormStroke> = mutableListOf(),
@@ -131,6 +142,9 @@ class MainActivity : ComponentActivity() {
         val myProvider = ComponentName(this, FoldstItWidgetReceiver::class.java)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && appWidgetManager.isRequestPinAppWidgetSupported) {
+            val pendingMemoPrefs = getSharedPreferences("pending_pin_prefs", Context.MODE_PRIVATE)
+            pendingMemoPrefs.edit().putString("pending_memo_id", memo.id).apply()
+
             val successCallback = Intent(this, FoldstItWidgetReceiver::class.java).apply {
                 action = "com.example.foldstit.PIN_WIDGET_ASSIGN"
                 putExtra("TARGET_MEMO_ID", memo.id)
@@ -140,9 +154,9 @@ class MainActivity : ComponentActivity() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             )
             appWidgetManager.requestPinAppWidget(myProvider, null, successPendingIntent)
-            Toast.makeText(this, "홈 화면에 포스트잇 위젯 등록 창이 열렸습니다.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "홈 화면에 위젯 추가 요청이 전송되었습니다.", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(this, "홈 화면에서 위젯을 길게 눌러 직접 추가해 주세요.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "홈 화면에서 위젯을 직접 추가해 주세요.", Toast.LENGTH_SHORT).show()
         }
     }
 }
@@ -171,12 +185,12 @@ fun PegboardScreen(
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
                     val themeName = obj.optString("theme", NoteTheme.PASTEL_YELLOW.name)
-                    val fontName = obj.optString("font", MemoFont.SYSTEM_DEFAULT.name)
+                    val fontName = obj.optString("font", MemoFont.SYSTEM_ONEUI.name)
                     val memo = MemoItem(
                         id = obj.getString("id"),
                         text = obj.optString("text", ""),
                         theme = try { NoteTheme.valueOf(themeName) } catch (_: Exception) { NoteTheme.PASTEL_YELLOW },
-                        font = try { MemoFont.valueOf(fontName) } catch (_: Exception) { MemoFont.SYSTEM_DEFAULT },
+                        font = try { MemoFont.valueOf(fontName) } catch (_: Exception) { MemoFont.SYSTEM_ONEUI },
                         fontSize = obj.optInt("fontSize", 16),
                         penWidth = obj.optDouble("penWidth", 5.0).toFloat(),
                         rotationAngle = obj.optDouble("rotationAngle", 0.0).toFloat(),
@@ -267,17 +281,6 @@ fun PegboardScreen(
             }
             prefs.edit().putString("memo_list_json", arr.toString()).apply()
 
-            if (memoList.isNotEmpty()) {
-                val latest = memoList.maxByOrNull { it.updatedAt } ?: memoList.first()
-                val legacyPrefs = context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE)
-                legacyPrefs.edit()
-                    .putString("text", latest.text)
-                    .putString("theme", latest.theme.name)
-                    .putString("font", latest.font.name)
-                    .putString("latest_memo_id", latest.id)
-                    .apply()
-            }
-
             CoroutineScope(Dispatchers.IO).launch {
                 FoldstItWidget().updateAll(context)
                 FoldstItWidget.notifyUpdate(context)
@@ -302,7 +305,6 @@ fun PegboardScreen(
             .fillMaxSize()
             .background(Color(0xFFD4D4D4))
     ) {
-        // 미세 타공 패턴
         Canvas(modifier = Modifier.fillMaxSize()) {
             val step = 28.dp.toPx()
             for (x in 0..(size.width / step).toInt()) {
@@ -316,7 +318,6 @@ fun PegboardScreen(
             }
         }
 
-        // 포스트잇 목록 그리드
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 160.dp),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 36.dp, bottom = 100.dp),
@@ -359,7 +360,6 @@ fun PegboardScreen(
                             )
                         }
                 ) {
-                    // 줄눈금
                     if (memo.theme.hasLines) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val lineGap = 22.dp.toPx()
@@ -376,7 +376,7 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 상단 압정 핀 그래픽
+                    // 상단 중앙 압정 핀 (16dp 원형 규격)
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -404,14 +404,13 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 텍스트 + 드로잉 동시 렌더링
                     Box(modifier = Modifier.fillMaxSize().padding(12.dp)) {
                         Text(
                             text = memo.text,
                             style = TextStyle(
                                 fontSize = 13.sp,
                                 color = memo.theme.textColor,
-                                fontFamily = memo.font.family,
+                                fontFamily = memo.font.toFontFamily(),
                                 lineHeight = 18.sp
                             ),
                             maxLines = 6,
@@ -440,7 +439,6 @@ fun PegboardScreen(
             }
         }
 
-        // 다중 선택 액션 바
         if (isSelectionMode) {
             Card(
                 shape = RoundedCornerShape(32.dp),
@@ -639,7 +637,6 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // 상세 설정 패널 (시스템 폰트 선택)
                     AnimatedVisibility(visible = showMemoSettings) {
                         Card(
                             shape = RoundedCornerShape(8.dp),
@@ -665,7 +662,7 @@ fun MemoEditorDialog(
                                     }
                                 }
 
-                                Text("글꼴 선택 (시스템 연계)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("글꼴 선택 (시스템 네이티브)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     MemoFont.values().forEach { f ->
                                         OutlinedButton(
@@ -675,7 +672,7 @@ fun MemoEditorDialog(
                                                 containerColor = if (currentFont == f) Color(0xFFE0E0E0) else Color.Transparent
                                             )
                                         ) {
-                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = f.family)
+                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = f.toFontFamily())
                                         }
                                     }
                                 }
@@ -721,7 +718,7 @@ fun MemoEditorDialog(
                             textStyle = TextStyle(
                                 fontSize = memoFontSize.sp,
                                 color = currentTheme.textColor,
-                                fontFamily = currentFont.family,
+                                fontFamily = currentFont.toFontFamily(),
                                 lineHeight = (memoFontSize + 8).sp
                             ),
                             modifier = Modifier
@@ -731,7 +728,7 @@ fun MemoEditorDialog(
                             enabled = !isPenMode,
                             decorationBox = { innerTextField ->
                                 if (memoText.isEmpty() && strokes.isEmpty()) {
-                                    Text("메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...", color = currentTheme.textColor.copy(alpha = 0.4f), fontSize = memoFontSize.sp, fontFamily = currentFont.family)
+                                    Text("메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...", color = currentTheme.textColor.copy(alpha = 0.4f), fontSize = memoFontSize.sp, fontFamily = currentFont.toFontFamily())
                                 }
                                 innerTextField()
                             }
