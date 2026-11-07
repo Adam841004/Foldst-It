@@ -254,7 +254,6 @@ fun PegboardScreen(
         }
     }
 
-    // [핵심] 위젯 전용 고화질 텍스트 렌더링 (홈 화면에서도 폰트 100% 동일 표시)
     fun renderTextBitmap(memo: MemoItem) {
         try {
             if (memo.text.isEmpty()) {
@@ -347,7 +346,6 @@ fun PegboardScreen(
                 }
                 arr.put(obj)
 
-                // 위젯 렌더러용 텍스트 & 드로잉 비트맵 동시 생성
                 CoroutineScope(Dispatchers.IO).launch {
                     renderTextBitmap(memo)
 
@@ -795,7 +793,7 @@ fun MemoEditorDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.55f))
-                .padding(16.dp),
+                .padding(horizontal = 10.dp, vertical = 16.dp),
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -805,22 +803,38 @@ fun MemoEditorDialog(
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(0.94f)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
-                        // 1단 헤더: 모드 전환, 엑셀식 서식, 폰트 크기 증감 툴바
+                    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+
+                        // [개선 1단]: 기본 제어 바 (커버화면에서도 절대 안 잘림)
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // 좌측: 입력 모드 토글
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                IconButton(onClick = { isPenMode = false; showDrawingPalette = false }) {
-                                    Icon(Icons.Default.Keyboard, contentDescription = "Text", tint = if (!isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
+                                IconButton(
+                                    onClick = { isPenMode = false; showDrawingPalette = false },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Keyboard,
+                                        contentDescription = "Text",
+                                        tint = if (!isPenMode) Color(0xFF1976D2) else currentTheme.textColor
+                                    )
                                 }
-                                IconButton(onClick = { isPenMode = true; showDrawingPalette = true }) {
-                                    Icon(Icons.Default.Create, contentDescription = "Pen", tint = if (isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
+                                IconButton(
+                                    onClick = { isPenMode = true; showDrawingPalette = true },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Create,
+                                        contentDescription = "Pen",
+                                        tint = if (isPenMode) Color(0xFF1976D2) else currentTheme.textColor
+                                    )
                                 }
 
                                 if (isPenMode) {
@@ -833,51 +847,97 @@ fun MemoEditorDialog(
                                             .clickable { showDrawingPalette = !showDrawingPalette }
                                     )
                                 }
+                            }
 
-                                // 엑셀 스타일 [B] [I] [U] [S]
-                                TextButton(
-                                    onClick = { isBold = !isBold },
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
-                                    colors = ButtonDefaults.textButtonColors(
-                                        containerColor = if (isBold) Color(0xFF1976D2) else Color.Transparent,
-                                        contentColor = if (isBold) Color.White else currentTheme.textColor
+                            // 우측: 실행취소, 삭제, 설정 아이콘 (우측 끝에 고정 확보)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = { if (strokes.isNotEmpty()) undoStack.add(strokes.removeAt(strokes.size - 1)) },
+                                    enabled = strokes.isNotEmpty(),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Undo,
+                                        contentDescription = "Undo",
+                                        tint = if (strokes.isNotEmpty()) currentTheme.textColor else Color.Gray
                                     )
-                                ) { Text("B", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp) }
+                                }
+                                IconButton(
+                                    onClick = { onDelete(memo.id) },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.7f))
+                                }
+                                IconButton(
+                                    onClick = { showMemoSettings = !showMemoSettings },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Tune, contentDescription = "Settings", tint = currentTheme.textColor)
+                                }
+                            }
+                        }
 
-                                TextButton(
-                                    onClick = { isItalic = !isItalic },
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
-                                    colors = ButtonDefaults.textButtonColors(
-                                        containerColor = if (isItalic) Color(0xFF1976D2) else Color.Transparent,
-                                        contentColor = if (isItalic) Color.White else currentTheme.textColor
-                                    )
-                                ) { Text("I", fontStyle = FontStyle.Italic, fontSize = 13.sp) }
+                        // [개선 2단]: 서식 툴바 (텍스트 모드 전용 2단 분리 -> 폴드 커버화면 100% 맞춤)
+                        if (!isPenMode) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // B, I, U, S 서식 버튼
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    TextButton(
+                                        onClick = { isBold = !isBold },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                        colors = ButtonDefaults.textButtonColors(
+                                            containerColor = if (isBold) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (isBold) Color.White else currentTheme.textColor
+                                        )
+                                    ) { Text("B", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp) }
 
-                                TextButton(
-                                    onClick = { isUnderline = !isUnderline },
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
-                                    colors = ButtonDefaults.textButtonColors(
-                                        containerColor = if (isUnderline) Color(0xFF1976D2) else Color.Transparent,
-                                        contentColor = if (isUnderline) Color.White else currentTheme.textColor
-                                    )
-                                ) { Text("U", style = TextStyle(textDecoration = TextDecoration.Underline), fontSize = 13.sp) }
+                                    TextButton(
+                                        onClick = { isItalic = !isItalic },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                        colors = ButtonDefaults.textButtonColors(
+                                            containerColor = if (isItalic) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (isItalic) Color.White else currentTheme.textColor
+                                        )
+                                    ) { Text("I", fontStyle = FontStyle.Italic, fontSize = 13.sp) }
 
-                                TextButton(
-                                    onClick = { isStrikethrough = !isStrikethrough },
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
-                                    colors = ButtonDefaults.textButtonColors(
-                                        containerColor = if (isStrikethrough) Color(0xFF1976D2) else Color.Transparent,
-                                        contentColor = if (isStrikethrough) Color.White else currentTheme.textColor
-                                    )
-                                ) { Text("S", style = TextStyle(textDecoration = TextDecoration.LineThrough), fontSize = 13.sp) }
+                                    TextButton(
+                                        onClick = { isUnderline = !isUnderline },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                        colors = ButtonDefaults.textButtonColors(
+                                            containerColor = if (isUnderline) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (isUnderline) Color.White else currentTheme.textColor
+                                        )
+                                    ) { Text("U", style = TextStyle(textDecoration = TextDecoration.Underline), fontSize = 13.sp) }
 
-                                // [신규] 엑셀 스타일 폰트 크기 증감 툴바
+                                    TextButton(
+                                        onClick = { isStrikethrough = !isStrikethrough },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                        colors = ButtonDefaults.textButtonColors(
+                                            containerColor = if (isStrikethrough) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (isStrikethrough) Color.White else currentTheme.textColor
+                                        )
+                                    ) { Text("S", style = TextStyle(textDecoration = TextDecoration.LineThrough), fontSize = 13.sp) }
+                                }
+
+                                // 엑셀 스타일 글꼴 크기 증감 조절기
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(Color.Black.copy(alpha = 0.06f))
-                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .background(Color.Black.copy(alpha = 0.07f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
                                         "-",
@@ -886,14 +946,14 @@ fun MemoEditorDialog(
                                         color = currentTheme.textColor,
                                         modifier = Modifier
                                             .clickable { if (memoFontSize > 12) memoFontSize -= 2 }
-                                            .padding(horizontal = 4.dp)
+                                            .padding(horizontal = 6.dp)
                                     )
                                     Text(
                                         "${memoFontSize}pt",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = currentTheme.textColor,
-                                        modifier = Modifier.padding(horizontal = 3.dp)
+                                        modifier = Modifier.padding(horizontal = 4.dp)
                                     )
                                     Text(
                                         "+",
@@ -902,23 +962,8 @@ fun MemoEditorDialog(
                                         color = currentTheme.textColor,
                                         modifier = Modifier
                                             .clickable { if (memoFontSize < 34) memoFontSize += 2 }
-                                            .padding(horizontal = 4.dp)
+                                            .padding(horizontal = 6.dp)
                                     )
-                                }
-                            }
-
-                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                IconButton(
-                                    onClick = { if (strokes.isNotEmpty()) undoStack.add(strokes.removeAt(strokes.size - 1)) },
-                                    enabled = strokes.isNotEmpty()
-                                ) {
-                                    Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (strokes.isNotEmpty()) currentTheme.textColor else Color.Gray)
-                                }
-                                IconButton(onClick = { onDelete(memo.id) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.7f))
-                                }
-                                IconButton(onClick = { showMemoSettings = !showMemoSettings }) {
-                                    Icon(Icons.Default.Tune, contentDescription = "Settings", tint = currentTheme.textColor)
                                 }
                             }
                         }
@@ -975,6 +1020,7 @@ fun MemoEditorDialog(
                             }
                         }
 
+                        // 본문 텍스트 & 다채색 드로잉 캔버스 영역
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             if (currentTheme.hasLines) {
                                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1087,6 +1133,7 @@ fun MemoEditorDialog(
                             }
                         }
 
+                        // 하단 액션 버튼
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                             horizontalArrangement = Arrangement.End
@@ -1115,6 +1162,7 @@ fun MemoEditorDialog(
                         }
                     }
 
+                    // 다크 플로팅 드로잉 팔레트 UI
                     if (isPenMode && showDrawingPalette) {
                         Card(
                             shape = RoundedCornerShape(24.dp),
@@ -1122,7 +1170,7 @@ fun MemoEditorDialog(
                             elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 60.dp, start = 12.dp, end = 12.dp)
+                                .padding(bottom = 60.dp, start = 8.dp, end = 8.dp)
                                 .fillMaxWidth()
                                 .zIndex(10f)
                         ) {
@@ -1156,11 +1204,11 @@ fun MemoEditorDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("굵기", color = Color.Gray, fontSize = 11.sp)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                         listOf(2.5f to "초미세", 5f to "보통", 10f to "굵게", 18f to "형광펜").forEach { (w, label) ->
                                             OutlinedButton(
                                                 onClick = { selectedPenWidth = w },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                                 colors = ButtonDefaults.outlinedButtonColors(
                                                     containerColor = if (selectedPenWidth == w) Color(0xFF37474F) else Color.Transparent
                                                 ),
@@ -1183,7 +1231,7 @@ fun MemoEditorDialog(
                                         val isSelected = selectedDrawColorHex.equals(hex, ignoreCase = true)
                                         Box(
                                             modifier = Modifier
-                                                .size(26.dp)
+                                                .size(24.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(android.graphics.Color.parseColor(hex)))
                                                 .border(
@@ -1199,7 +1247,7 @@ fun MemoEditorDialog(
                                                     Icons.Default.Check,
                                                     contentDescription = null,
                                                     tint = if (hex == "#FFFFFF" || hex == "#FFEB3B") Color.Black else Color.White,
-                                                    modifier = Modifier.size(16.dp)
+                                                    modifier = Modifier.size(14.dp)
                                                 )
                                             }
                                         }
