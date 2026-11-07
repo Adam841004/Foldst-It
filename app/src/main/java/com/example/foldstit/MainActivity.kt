@@ -12,8 +12,16 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.text.Layout
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.StrikethroughSpan
+import android.text.style.StyleSpan
+import android.text.style.TypefaceSpan
+import android.text.style.UnderlineSpan
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,10 +62,15 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextGeometricTransform
 import androidx.compose.ui.unit.dp
@@ -121,6 +134,19 @@ object LocalFontLoader {
     }
 }
 
+// 리치 텍스트 서식 구간 데이터 모델
+data class TextSpanItem(
+    val start: Int,
+    val end: Int,
+    val fontName: String = MemoFont.DEFAULT.name,
+    val colorHex: String = "#2C2C2C",
+    val fontSize: Int = 16,
+    val isBold: Boolean = false,
+    val isItalic: Boolean = false,
+    val isUnderline: Boolean = false,
+    val isStrikethrough: Boolean = false
+)
+
 data class NormPoint(val x: Float, val y: Float)
 data class NormStroke(val points: List<NormPoint>, val colorHex: String = "#212121", val width: Float = 5f)
 
@@ -135,6 +161,7 @@ data class MemoItem(
     var isItalic: Boolean = false,
     var isUnderline: Boolean = false,
     var isStrikethrough: Boolean = false,
+    val spans: MutableList<TextSpanItem> = mutableListOf(),
     val strokes: MutableList<NormStroke> = mutableListOf(),
     var rotationAngle: Float = 0f,
     var updatedAt: Long = System.currentTimeMillis()
@@ -189,6 +216,48 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// Spans 리스트를 Compose AnnotatedString으로 복원하는 헬퍼
+fun buildStyledAnnotatedString(context: Context, text: String, spans: List<TextSpanItem>, defaultFont: MemoFont, defaultColor: Color, defaultSize: Int): AnnotatedString {
+    return buildAnnotatedString {
+        append(text)
+        if (spans.isEmpty()) {
+            addStyle(
+                SpanStyle(
+                    fontFamily = LocalFontLoader.getFontFamily(context, defaultFont),
+                    color = defaultColor,
+                    fontSize = defaultSize.sp
+                ),
+                0, text.length
+            )
+        } else {
+            spans.forEach { sp ->
+                val s = sp.start.coerceIn(0, text.length)
+                val e = sp.end.coerceIn(0, text.length)
+                if (s < e) {
+                    val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
+                    val textDecor = TextDecoration.combine(
+                        listOfNotNull(
+                            if (sp.isUnderline) TextDecoration.Underline else null,
+                            if (sp.isStrikethrough) TextDecoration.LineThrough else null
+                        )
+                    )
+                    addStyle(
+                        SpanStyle(
+                            fontFamily = LocalFontLoader.getFontFamily(context, fontEnum),
+                            color = Color(android.graphics.Color.parseColor(sp.colorHex)),
+                            fontSize = sp.fontSize.sp,
+                            fontWeight = if (sp.isBold) FontWeight.ExtraBold else FontWeight.Normal,
+                            textGeometricTransform = if (sp.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
+                            textDecoration = textDecor
+                        ),
+                        s, e
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun PegboardScreen(
     context: Context,
@@ -235,6 +304,27 @@ fun PegboardScreen(
                         rotationAngle = obj.optDouble("rotationAngle", 0.0).toFloat(),
                         updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                     )
+
+                    val spansArr = obj.optJSONArray("spans")
+                    if (spansArr != null) {
+                        for (s in 0 until spansArr.length()) {
+                            val spObj = spansArr.getJSONObject(s)
+                            memo.spans.add(
+                                TextSpanItem(
+                                    start = spObj.getInt("start"),
+                                    end = spObj.getInt("end"),
+                                    fontName = spObj.optString("fontName", MemoFont.DEFAULT.name),
+                                    colorHex = spObj.optString("colorHex", "#2C2C2C"),
+                                    fontSize = spObj.optInt("fontSize", 16),
+                                    isBold = spObj.optBoolean("isBold", false),
+                                    isItalic = spObj.optBoolean("isItalic", false),
+                                    isUnderline = spObj.optBoolean("isUnderline", false),
+                                    isStrikethrough = spObj.optBoolean("isStrikethrough", false)
+                                )
+                            )
+                        }
+                    }
+
                     val strokesArr = obj.optJSONArray("strokes")
                     if (strokesArr != null) {
                         for (j in 0 until strokesArr.length()) {
@@ -254,6 +344,7 @@ fun PegboardScreen(
         }
     }
 
+    // 위젯 전용 고화질 텍스트 렌더링 (Spannable 기반 단어별 폰트/색상 반영)
     fun renderTextBitmap(memo: MemoItem) {
         try {
             if (memo.text.isEmpty()) {
@@ -267,38 +358,49 @@ fun PegboardScreen(
             val bmp = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(bmp)
 
-            val baseTf = LocalFontLoader.getTypeface(context, memo.font)
-            val styledTf = if (memo.isBold) Typeface.create(baseTf, Typeface.BOLD) else baseTf
-
-            val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            val basePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = when (memo.theme) {
                     NoteTheme.NOTEBOOK -> android.graphics.Color.parseColor("#1A237E")
                     else -> android.graphics.Color.parseColor("#2C2C2C")
                 }
                 textSize = (memo.fontSize * 2.8f).coerceIn(32f, 72f)
-                typeface = styledTf
-                if (memo.isItalic) textSkewX = -0.28f
-                if (memo.isUnderline) isUnderlineText = true
-                if (memo.isStrikethrough) isStrikeThruText = true
+                typeface = LocalFontLoader.getTypeface(context, memo.font)
+            }
+
+            val ssb = SpannableStringBuilder(memo.text)
+            if (memo.spans.isNotEmpty()) {
+                memo.spans.forEach { sp ->
+                    val s = sp.start.coerceIn(0, memo.text.length)
+                    val e = sp.end.coerceIn(0, memo.text.length)
+                    if (s < e) {
+                        val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { memo.font }
+                        val customTf = LocalFontLoader.getTypeface(context, fontEnum)
+                        ssb.setSpan(ForegroundColorSpan(android.graphics.Color.parseColor(sp.colorHex)), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            ssb.setSpan(TypefaceSpan(customTf), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+                        if (sp.isBold) ssb.setSpan(StyleSpan(Typeface.BOLD), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (sp.isItalic) ssb.setSpan(StyleSpan(Typeface.ITALIC), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (sp.isUnderline) ssb.setSpan(UnderlineSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (sp.isStrikethrough) ssb.setSpan(StrikethroughSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
             }
 
             val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                StaticLayout.Builder.obtain(memo.text, 0, memo.text.length, paint, bmpWidth - 40)
+                StaticLayout.Builder.obtain(ssb, 0, ssb.length, basePaint, bmpWidth - 48)
                     .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .setLineSpacing(6f, 1.15f)
+                    .setLineSpacing(8f, 1.15f)
                     .setIncludePad(false)
                     .setMaxLines(8)
                     .build()
             } else {
                 @Suppress("DEPRECATION")
-                StaticLayout(
-                    memo.text, paint, bmpWidth - 40,
-                    Layout.Alignment.ALIGN_NORMAL, 1.15f, 6f, false
-                )
+                StaticLayout(ssb, basePaint, bmpWidth - 48, Layout.Alignment.ALIGN_NORMAL, 1.15f, 8f, false)
             }
 
             canvas.save()
-            canvas.translate(20f, 20f)
+            canvas.translate(24f, 24f)
             staticLayout.draw(canvas)
             canvas.restore()
 
@@ -326,6 +428,23 @@ fun PegboardScreen(
                     put("isStrikethrough", memo.isStrikethrough)
                     put("rotationAngle", memo.rotationAngle)
                     put("updatedAt", memo.updatedAt)
+
+                    val spArr = JSONArray()
+                    memo.spans.forEach { sp ->
+                        spArr.put(JSONObject().apply {
+                            put("start", sp.start)
+                            put("end", sp.end)
+                            put("fontName", sp.fontName)
+                            put("colorHex", sp.colorHex)
+                            put("fontSize", sp.fontSize)
+                            put("isBold", sp.isBold)
+                            put("isItalic", sp.isItalic)
+                            put("isUnderline", sp.isUnderline)
+                            put("isStrikethrough", sp.isStrikethrough)
+                        })
+                    }
+                    put("spans", spArr)
+
                     val sArr = JSONArray()
                     memo.strokes.forEach { stroke ->
                         val strokeObj = JSONObject().apply {
@@ -526,30 +645,25 @@ fun PegboardScreen(
                         }
                     }
 
+                    // 본문: 단어별 서식(AnnotatedString) 렌더링
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        val textDecor = TextDecoration.combine(
-                            listOfNotNull(
-                                if (memo.isUnderline) TextDecoration.Underline else null,
-                                if (memo.isStrikethrough) TextDecoration.LineThrough else null
-                            )
+                        val styledText = buildStyledAnnotatedString(
+                            context = context,
+                            text = memo.text,
+                            spans = memo.spans,
+                            defaultFont = memo.font,
+                            defaultColor = memo.theme.textColor,
+                            defaultSize = memo.fontSize
                         )
 
                         Text(
-                            text = memo.text,
-                            style = TextStyle(
-                                fontSize = memo.fontSize.sp,
-                                color = memo.theme.textColor,
-                                fontFamily = LocalFontLoader.getFontFamily(context, memo.font),
-                                fontWeight = if (memo.isBold) FontWeight.ExtraBold else FontWeight.Normal,
-                                textGeometricTransform = if (memo.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
-                                textDecoration = textDecor,
-                                lineHeight = (memo.fontSize + 6).sp
-                            ),
+                            text = styledText,
                             maxLines = 6,
+                            lineHeight = (memo.fontSize + 6).sp,
                             modifier = Modifier.fillMaxSize()
                         )
 
@@ -754,15 +868,20 @@ fun MemoEditorDialog(
     onDelete: (String) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var memoText by remember { mutableStateOf(memo.text) }
+    var tfValue by remember { mutableStateOf(TextFieldValue(memo.text, TextRange(memo.text.length))) }
     var currentTheme by remember { mutableStateOf(memo.theme) }
-    var currentFont by remember { mutableStateOf(memo.font) }
-    var memoFontSize by remember { mutableStateOf(memo.fontSize) }
 
-    var isBold by remember { mutableStateOf(memo.isBold) }
-    var isItalic by remember { mutableStateOf(memo.isItalic) }
-    var isUnderline by remember { mutableStateOf(memo.isUnderline) }
-    var isStrikethrough by remember { mutableStateOf(memo.isStrikethrough) }
+    // 단어별 리치 텍스트 상태
+    val spanList = remember { mutableStateListOf<TextSpanItem>().apply { addAll(memo.spans) } }
+
+    // 현재 활성화된 글자 스타일 (커서 이후 연속 작성 및 선택 블록 적용용)
+    var activeFont by remember { mutableStateOf(memo.font) }
+    var activeColorHex by remember { mutableStateOf("#2C2C2C") }
+    var activeFontSize by remember { mutableStateOf(memo.fontSize) }
+    var activeBold by remember { mutableStateOf(memo.isBold) }
+    var activeItalic by remember { mutableStateOf(memo.isItalic) }
+    var activeUnderline by remember { mutableStateOf(memo.isUnderline) }
+    var activeStrikethrough by remember { mutableStateOf(memo.isStrikethrough) }
 
     var isPenMode by remember { mutableStateOf(false) }
     var showMemoSettings by remember { mutableStateOf(false) }
@@ -772,8 +891,8 @@ fun MemoEditorDialog(
     var showDrawingPalette by remember { mutableStateOf(false) }
 
     val colorPalette = listOf(
-        "#FFFFFF", "#E53935", "#FF9800", "#FFEB3B", "#4CAF50",
-        "#00BCD4", "#2196F3", "#9C27B0", "#212121", "#E91E63"
+        "#2C2C2C", "#E53935", "#FF9800", "#FFEB3B", "#4CAF50",
+        "#00BCD4", "#2196F3", "#9C27B0", "#FFFFFF", "#E91E63"
     )
 
     val strokes = remember { mutableStateListOf<NormStroke>().apply { addAll(memo.strokes) } }
@@ -784,6 +903,43 @@ fun MemoEditorDialog(
     var canvasHeight by remember { mutableStateOf(1f) }
 
     val focusRequester = remember { FocusRequester() }
+
+    // 선택 영역이 있을 시 즉시 Span 적용, 없을 시 커서 이후 스타일 유지
+    fun applyOrSetStyle(
+        newFont: MemoFont? = null,
+        newColor: String? = null,
+        newSize: Int? = null,
+        toggleBold: Boolean = false,
+        toggleItalic: Boolean = false,
+        toggleUnderline: Boolean = false,
+        toggleStrikethrough: Boolean = false
+    ) {
+        if (newFont != null) activeFont = newFont
+        if (newColor != null) activeColorHex = newColor
+        if (newSize != null) activeFontSize = newSize
+        if (toggleBold) activeBold = !activeBold
+        if (toggleItalic) activeItalic = !activeItalic
+        if (toggleUnderline) activeUnderline = !activeUnderline
+        if (toggleStrikethrough) activeStrikethrough = !activeStrikethrough
+
+        val sel = tfValue.selection
+        if (!sel.collapsed && sel.min < sel.max) {
+            spanList.removeAll { !(it.end <= sel.min || it.start >= sel.max) }
+            spanList.add(
+                TextSpanItem(
+                    start = sel.min,
+                    end = sel.max,
+                    fontName = activeFont.name,
+                    colorHex = activeColorHex,
+                    fontSize = activeFontSize,
+                    isBold = activeBold,
+                    isItalic = activeItalic,
+                    isUnderline = activeUnderline,
+                    isStrikethrough = activeStrikethrough
+                )
+            )
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -805,13 +961,12 @@ fun MemoEditorDialog(
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
 
-                        // [개선 1단]: 기본 제어 바 (커버화면에서도 절대 안 잘림)
+                        // 1단 기본 제어 바
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // 좌측: 입력 모드 토글
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -849,7 +1004,6 @@ fun MemoEditorDialog(
                                 }
                             }
 
-                            // 우측: 실행취소, 삭제, 설정 아이콘 (우측 끝에 고정 확보)
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -859,11 +1013,7 @@ fun MemoEditorDialog(
                                     enabled = strokes.isNotEmpty(),
                                     modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(
-                                        Icons.Default.Undo,
-                                        contentDescription = "Undo",
-                                        tint = if (strokes.isNotEmpty()) currentTheme.textColor else Color.Gray
-                                    )
+                                    Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (strokes.isNotEmpty()) currentTheme.textColor else Color.Gray)
                                 }
                                 IconButton(
                                     onClick = { onDelete(memo.id) },
@@ -880,58 +1030,73 @@ fun MemoEditorDialog(
                             }
                         }
 
-                        // [개선 2단]: 서식 툴바 (텍스트 모드 전용 2단 분리 -> 폴드 커버화면 100% 맞춤)
+                        // 2단 서식 툴바 (텍스트 모드 전용: B, I, U, S, 글자 크기, 글자 색상 칩)
                         if (!isPenMode) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 6.dp),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // B, I, U, S 서식 버튼
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     TextButton(
-                                        onClick = { isBold = !isBold },
+                                        onClick = { applyOrSetStyle(toggleBold = true) },
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                         colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (isBold) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (isBold) Color.White else currentTheme.textColor
+                                            containerColor = if (activeBold) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (activeBold) Color.White else currentTheme.textColor
                                         )
                                     ) { Text("B", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp) }
 
                                     TextButton(
-                                        onClick = { isItalic = !isItalic },
+                                        onClick = { applyOrSetStyle(toggleItalic = true) },
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                         colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (isItalic) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (isItalic) Color.White else currentTheme.textColor
+                                            containerColor = if (activeItalic) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (activeItalic) Color.White else currentTheme.textColor
                                         )
                                     ) { Text("I", fontStyle = FontStyle.Italic, fontSize = 13.sp) }
 
                                     TextButton(
-                                        onClick = { isUnderline = !isUnderline },
+                                        onClick = { applyOrSetStyle(toggleUnderline = true) },
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                         colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (isUnderline) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (isUnderline) Color.White else currentTheme.textColor
+                                            containerColor = if (activeUnderline) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (activeUnderline) Color.White else currentTheme.textColor
                                         )
                                     ) { Text("U", style = TextStyle(textDecoration = TextDecoration.Underline), fontSize = 13.sp) }
 
                                     TextButton(
-                                        onClick = { isStrikethrough = !isStrikethrough },
+                                        onClick = { applyOrSetStyle(toggleStrikethrough = true) },
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                         colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (isStrikethrough) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (isStrikethrough) Color.White else currentTheme.textColor
+                                            containerColor = if (activeStrikethrough) Color(0xFF1976D2) else Color.Transparent,
+                                            contentColor = if (activeStrikethrough) Color.White else currentTheme.textColor
                                         )
                                     ) { Text("S", style = TextStyle(textDecoration = TextDecoration.LineThrough), fontSize = 13.sp) }
+
+                                    // 글자 색상 빠른 선택 칩
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(android.graphics.Color.parseColor(activeColorHex)))
+                                            .border(1.dp, Color.White, CircleShape)
+                                            .clickable {
+                                                val nextColor = when (activeColorHex) {
+                                                    "#2C2C2C" -> "#E53935"
+                                                    "#E53935" -> "#2196F3"
+                                                    "#2196F3" -> "#4CAF50"
+                                                    else -> "#2C2C2C"
+                                                }
+                                                applyOrSetStyle(newColor = nextColor)
+                                            }
+                                    )
                                 }
 
-                                // 엑셀 스타일 글꼴 크기 증감 조절기
+                                // 엑셀식 글꼴 크기 증감 조절기
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
@@ -945,11 +1110,11 @@ fun MemoEditorDialog(
                                         fontSize = 15.sp,
                                         color = currentTheme.textColor,
                                         modifier = Modifier
-                                            .clickable { if (memoFontSize > 12) memoFontSize -= 2 }
+                                            .clickable { if (activeFontSize > 12) applyOrSetStyle(newSize = activeFontSize - 2) }
                                             .padding(horizontal = 6.dp)
                                     )
                                     Text(
-                                        "${memoFontSize}pt",
+                                        "${activeFontSize}pt",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = currentTheme.textColor,
@@ -961,14 +1126,14 @@ fun MemoEditorDialog(
                                         fontSize = 15.sp,
                                         color = currentTheme.textColor,
                                         modifier = Modifier
-                                            .clickable { if (memoFontSize < 34) memoFontSize += 2 }
+                                            .clickable { if (activeFontSize < 34) applyOrSetStyle(newSize = activeFontSize + 2) }
                                             .padding(horizontal = 6.dp)
                                     )
                                 }
                             }
                         }
 
-                        // 상단 폰트 & 테마 설정 패널
+                        // 설정 패널 (단어별 폰트 & 테마)
                         AnimatedVisibility(visible = showMemoSettings) {
                             Card(
                                 shape = RoundedCornerShape(8.dp),
@@ -994,17 +1159,17 @@ fun MemoEditorDialog(
                                         }
                                     }
 
-                                    Text("나눔 손글씨 폰트 선택", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("나눔 손글씨 폰트 (선택 단어 또는 이후 작성)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     LazyRow(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         items(MemoFont.values().toList(), key = { it.name }) { f ->
                                             OutlinedButton(
-                                                onClick = { currentFont = f },
+                                                onClick = { applyOrSetStyle(newFont = f) },
                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                                 colors = ButtonDefaults.outlinedButtonColors(
-                                                    containerColor = if (currentFont == f) Color(0xFFE0E0E0) else Color.Transparent
+                                                    containerColor = if (activeFont == f) Color(0xFFE0E0E0) else Color.Transparent
                                                 )
                                             ) {
                                                 Text(
@@ -1020,7 +1185,7 @@ fun MemoEditorDialog(
                             }
                         }
 
-                        // 본문 텍스트 & 다채색 드로잉 캔버스 영역
+                        // 본문 텍스트필드 & 드로잉 캔버스
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             if (currentTheme.hasLines) {
                                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1038,24 +1203,41 @@ fun MemoEditorDialog(
                                 }
                             }
 
-                            val activeDecor = TextDecoration.combine(
-                                listOfNotNull(
-                                    if (isUnderline) TextDecoration.Underline else null,
-                                    if (isStrikethrough) TextDecoration.LineThrough else null
-                                )
-                            )
-
+                            // 타이핑 시 활성화된 스타일로 새 글자 span 자동 누적
                             BasicTextField(
-                                value = memoText,
-                                onValueChange = { memoText = it },
+                                value = tfValue,
+                                onValueChange = { newVal ->
+                                    val oldLen = tfValue.text.length
+                                    val newLen = newVal.text.length
+                                    if (newLen > oldLen) {
+                                        val insertStart = tfValue.selection.min
+                                        val insertEnd = insertStart + (newLen - oldLen)
+                                        spanList.add(
+                                            TextSpanItem(
+                                                start = insertStart,
+                                                end = insertEnd,
+                                                fontName = activeFont.name,
+                                                colorHex = activeColorHex,
+                                                fontSize = activeFontSize,
+                                                isBold = activeBold,
+                                                isItalic = activeItalic,
+                                                isUnderline = activeUnderline,
+                                                isStrikethrough = activeStrikethrough
+                                            )
+                                        )
+                                    }
+                                    tfValue = newVal
+                                },
+                                visualTransformation = {
+                                    androidx.compose.ui.text.input.TransformedText(
+                                        buildStyledAnnotatedString(context, tfValue.text, spanList, activeFont, currentTheme.textColor, activeFontSize),
+                                        androidx.compose.ui.text.input.OffsetMapping.Identity
+                                    )
+                                },
                                 textStyle = TextStyle(
-                                    fontSize = memoFontSize.sp,
-                                    color = currentTheme.textColor,
-                                    fontFamily = LocalFontLoader.getFontFamily(context, currentFont),
-                                    fontWeight = if (isBold) FontWeight.ExtraBold else FontWeight.Normal,
-                                    textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.28f) else null,
-                                    textDecoration = activeDecor,
-                                    lineHeight = (memoFontSize + 8).sp
+                                    fontSize = activeFontSize.sp,
+                                    lineHeight = (activeFontSize + 8).sp,
+                                    color = currentTheme.textColor
                                 ),
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -1063,15 +1245,13 @@ fun MemoEditorDialog(
                                     .zIndex(if (!isPenMode) 2f else 0f),
                                 enabled = !isPenMode,
                                 decorationBox = { innerTextField ->
-                                    if (memoText.isEmpty() && strokes.isEmpty()) {
+                                    if (tfValue.text.isEmpty() && strokes.isEmpty()) {
                                         Text(
                                             text = "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
                                             style = TextStyle(
                                                 color = currentTheme.textColor.copy(alpha = 0.4f),
-                                                fontSize = memoFontSize.sp,
-                                                fontFamily = LocalFontLoader.getFontFamily(context, currentFont),
-                                                fontWeight = if (isBold) FontWeight.ExtraBold else FontWeight.Normal,
-                                                textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.28f) else null
+                                                fontSize = activeFontSize.sp,
+                                                fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
                                             )
                                         )
                                     }
@@ -1133,7 +1313,7 @@ fun MemoEditorDialog(
                             }
                         }
 
-                        // 하단 액션 버튼
+                        // 하단 버튼
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                             horizontalArrangement = Arrangement.End
@@ -1142,15 +1322,17 @@ fun MemoEditorDialog(
                             Spacer(modifier = Modifier.width(8.dp))
                             Button(
                                 onClick = {
-                                    memo.text = memoText
+                                    memo.text = tfValue.text
                                     memo.theme = currentTheme
-                                    memo.font = currentFont
+                                    memo.font = activeFont
                                     memo.penWidth = selectedPenWidth
-                                    memo.fontSize = memoFontSize
-                                    memo.isBold = isBold
-                                    memo.isItalic = isItalic
-                                    memo.isUnderline = isUnderline
-                                    memo.isStrikethrough = isStrikethrough
+                                    memo.fontSize = activeFontSize
+                                    memo.isBold = activeBold
+                                    memo.isItalic = activeItalic
+                                    memo.isUnderline = activeUnderline
+                                    memo.isStrikethrough = activeStrikethrough
+                                    memo.spans.clear()
+                                    memo.spans.addAll(spanList)
                                     memo.strokes.clear()
                                     memo.strokes.addAll(strokes)
                                     onSave(memo)
@@ -1162,7 +1344,7 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // 다크 플로팅 드로잉 팔레트 UI
+                    // 드로잉 팔레트 UI
                     if (isPenMode && showDrawingPalette) {
                         Card(
                             shape = RoundedCornerShape(24.dp),
