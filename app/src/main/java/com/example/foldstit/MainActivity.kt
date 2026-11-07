@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -85,14 +86,33 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935), true)
 }
 
-// 안드로이드 네이티브 실시간 확정 글꼴 규격
-enum class MemoFont(val title: String, val family: FontFamily, val baseWeight: FontWeight) {
-    DEFAULT("내 폰 기본체", FontFamily.Default, FontWeight.Normal),
-    SERIF("감성 명조체", FontFamily.Serif, FontWeight.Normal),
-    MONOSPACE("클래식 타자기", FontFamily.Monospace, FontWeight.Normal),
-    SANS("깔끔 고딕", FontFamily.SansSerif, FontWeight.Normal),
-    HEAVY("초강력 블랙", FontFamily.Default, FontWeight.Black),
-    LIGHT("슬림 라이트", FontFamily.Default, FontWeight.Light)
+// assets/fonts/ 실제 업로드 파일명 1:1 매핑
+enum class MemoFont(val title: String, val fileName: String) {
+    DEFAULT("내 폰 기본체", ""),
+    NANUM_PEN("나눔손글씨 펜", "NanumPen.ttf"),
+    GARAM("가람연꽃", "나눔손글씨 가람연꽃.ttf"),
+    GALMAET("갈맷글", "나눔손글씨 갈맷글.ttf"),
+    GODING("고딕 아니고 고딩", "나눔손글씨 고딕 아니고 고딩.ttf"),
+    GYURI("규리의 일기", "나눔손글씨 규리의 일기.ttf")
+}
+
+object LocalFontLoader {
+    private val typefaceCache = mutableMapOf<String, FontFamily>()
+
+    fun getFontFamily(context: Context, font: MemoFont): FontFamily {
+        if (font.fileName.isEmpty()) return FontFamily.Default
+        if (typefaceCache.containsKey(font.name)) return typefaceCache[font.name]!!
+
+        return try {
+            val tf = Typeface.createFromAsset(context.assets, "fonts/${font.fileName}")
+            val ff = FontFamily(tf)
+            typefaceCache[font.name] = ff
+            ff
+        } catch (e: Exception) {
+            e.printStackTrace()
+            FontFamily.Default
+        }
+    }
 }
 
 data class NormPoint(val x: Float, val y: Float)
@@ -460,8 +480,8 @@ fun PegboardScreen(
                             style = TextStyle(
                                 fontSize = 13.sp,
                                 color = memo.theme.textColor,
-                                fontFamily = memo.font.family,
-                                fontWeight = if (memo.isBold) FontWeight.ExtraBold else memo.font.baseWeight,
+                                fontFamily = LocalFontLoader.getFontFamily(context, memo.font),
+                                fontWeight = if (memo.isBold) FontWeight.ExtraBold else FontWeight.Normal,
                                 textGeometricTransform = if (memo.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
                                 textDecoration = textDecor,
                                 lineHeight = 18.sp
@@ -670,6 +690,7 @@ fun MemoEditorDialog(
     onSave: (MemoItem) -> Unit,
     onDelete: (String) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var memoText by remember { mutableStateOf(memo.text) }
     var currentTheme by remember { mutableStateOf(memo.theme) }
     var currentFont by remember { mutableStateOf(memo.font) }
@@ -797,6 +818,7 @@ fun MemoEditorDialog(
                             }
                         }
 
+                        // 상단 폰트 & 테마 설정 패널 (업로드된 5종 한글 폰트 목록)
                         AnimatedVisibility(visible = showMemoSettings) {
                             Card(
                                 shape = RoundedCornerShape(8.dp),
@@ -822,7 +844,7 @@ fun MemoEditorDialog(
                                         }
                                     }
 
-                                    Text("글꼴 선택 (실시간 반영)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("나눔 손글씨 폰트 선택", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     LazyRow(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         modifier = Modifier.fillMaxWidth()
@@ -839,8 +861,7 @@ fun MemoEditorDialog(
                                                     f.title,
                                                     fontSize = 10.sp,
                                                     color = Color.Black,
-                                                    fontFamily = f.family,
-                                                    fontWeight = if (isBold) FontWeight.ExtraBold else f.baseWeight
+                                                    fontFamily = LocalFontLoader.getFontFamily(context, f)
                                                 )
                                             }
                                         }
@@ -879,8 +900,8 @@ fun MemoEditorDialog(
                                 textStyle = TextStyle(
                                     fontSize = memoFontSize.sp,
                                     color = currentTheme.textColor,
-                                    fontFamily = currentFont.family,
-                                    fontWeight = if (isBold) FontWeight.ExtraBold else currentFont.baseWeight,
+                                    fontFamily = LocalFontLoader.getFontFamily(context, currentFont),
+                                    fontWeight = if (isBold) FontWeight.ExtraBold else FontWeight.Normal,
                                     textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.28f) else null,
                                     textDecoration = activeDecor,
                                     lineHeight = (memoFontSize + 8).sp
@@ -897,8 +918,8 @@ fun MemoEditorDialog(
                                             style = TextStyle(
                                                 color = currentTheme.textColor.copy(alpha = 0.4f),
                                                 fontSize = memoFontSize.sp,
-                                                fontFamily = currentFont.family,
-                                                fontWeight = if (isBold) FontWeight.ExtraBold else currentFont.baseWeight,
+                                                fontFamily = LocalFontLoader.getFontFamily(context, currentFont),
+                                                fontWeight = if (isBold) FontWeight.ExtraBold else FontWeight.Normal,
                                                 textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.28f) else null
                                             )
                                         )
@@ -989,7 +1010,7 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // 다크 플로팅 드로잉 팔레트 UI (컴파일러 스코프 충돌 완전 해결)
+                    // 다크 플로팅 드로잉 팔레트
                     if (isPenMode && showDrawingPalette) {
                         Card(
                             shape = RoundedCornerShape(24.dp),
