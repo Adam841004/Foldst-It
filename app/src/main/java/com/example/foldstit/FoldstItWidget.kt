@@ -18,6 +18,7 @@ import androidx.glance.action.actionParametersOf
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.cornerRadius
@@ -66,13 +67,32 @@ class FoldstItWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
             val boardPrefs = context.getSharedPreferences("foldstit_board", Context.MODE_PRIVATE)
-            val legacyPrefs = context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE)
-            val targetMemoId = legacyPrefs.getString("latest_memo_id", "") ?: ""
+            val widgetMapPrefs = context.getSharedPreferences("widget_id_map", Context.MODE_PRIVATE)
+
+            // 1. 개별 위젯 ID 확인
+            val appWidgetId = try {
+                GlanceAppWidgetManager(context).getAppWidgetId(id)
+            } catch (_: Exception) { -1 }
+
+            // 2. 이 위젯에 매핑된 고유 memoId 가져오기
+            var targetMemoId = if (appWidgetId != -1) {
+                widgetMapPrefs.getString("widget_$appWidgetId", "") ?: ""
+            } else ""
+
+            // fallback (초기 등록 시 매핑이 아직 비어있다면 대기 중인 메모 할당)
+            if (targetMemoId.isEmpty()) {
+                val pendingPrefs = context.getSharedPreferences("pending_pin_prefs", Context.MODE_PRIVATE)
+                targetMemoId = pendingPrefs.getString("pending_memo_id", "") ?: ""
+                if (targetMemoId.isNotEmpty() && appWidgetId != -1) {
+                    widgetMapPrefs.edit().putString("widget_$appWidgetId", targetMemoId).apply()
+                }
+            }
 
             var memoText = ""
             var themeName = "PASTEL_YELLOW"
-            var fontName = "SYSTEM_DEFAULT"
+            var fontName = "SYSTEM_ONEUI"
 
+            // 3. 해당 메모의 데이터 추출
             val jsonStr = boardPrefs.getString("memo_list_json", null)
             if (!jsonStr.isNullOrEmpty() && targetMemoId.isNotEmpty()) {
                 try {
@@ -82,19 +102,14 @@ class FoldstItWidget : GlanceAppWidget() {
                         if (obj.optString("id") == targetMemoId) {
                             memoText = obj.optString("text", "")
                             themeName = obj.optString("theme", "PASTEL_YELLOW")
-                            fontName = obj.optString("font", "SYSTEM_DEFAULT")
+                            fontName = obj.optString("font", "SYSTEM_ONEUI")
                             break
                         }
                     }
                 } catch (_: Exception) {}
             }
 
-            if (memoText.isEmpty() && targetMemoId.isEmpty()) {
-                memoText = legacyPrefs.getString("text", "") ?: ""
-                themeName = legacyPrefs.getString("theme", "PASTEL_YELLOW") ?: "PASTEL_YELLOW"
-                fontName = legacyPrefs.getString("font", "SYSTEM_DEFAULT") ?: "SYSTEM_DEFAULT"
-            }
-
+            // 4. 앱 타공판 카드와 1:1 완벽 일치하는 테마 규격
             val (bgColor, textColor, pinColor) = when (themeName) {
                 "PASTEL_BLUE" -> Triple(Color(0xFFE1F5FE), Color(0xFF2C2C2C), Color(0xFFE53935))
                 "PASTEL_PINK" -> Triple(Color(0xFFFCE4EC), Color(0xFF2C2C2C), Color(0xFF43A047))
@@ -106,8 +121,7 @@ class FoldstItWidget : GlanceAppWidget() {
             val widgetFontFamily = when (fontName) {
                 "SYSTEM_SERIF" -> FontFamily.Serif
                 "SYSTEM_MONO" -> FontFamily.Monospace
-                "SYSTEM_SANS" -> FontFamily.SansSerif
-                else -> FontFamily.SansSerif // 시스템 기본 연동
+                else -> FontFamily.SansSerif
             }
 
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
@@ -119,7 +133,7 @@ class FoldstItWidget : GlanceAppWidget() {
                 actionStartActivity<MainActivity>()
             }
 
-            // 앱 타공판 카드와 100% 동일한 포스트잇 룩앤필
+            // 위젯 외형: 앱 타공판 카드와 똑같은 둥근 모서리 및 상단 중앙 16dp 원형 핀
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
@@ -128,26 +142,25 @@ class FoldstItWidget : GlanceAppWidget() {
                     .clickable(clickAction)
                     .padding(8.dp)
             ) {
-                // 1. 상단 중앙 압정 핀 그래픽 (앱 카드와 위치/색상 일치)
+                // 상단 중앙 핀
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Box(
                         modifier = GlanceModifier
-                            .size(12.dp)
-                            .cornerRadius(6.dp)
+                            .size(16.dp)
+                            .cornerRadius(8.dp)
                             .background(pinColor)
                     ) {}
                 }
 
-                // 2. 메모 본문 캔버스 영역 (텍스트 + 드로잉 비트맵 오버레이)
+                // 본문: 텍스트와 드로잉 손글씨 완전 오버레이
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
                         .padding(top = 10.dp, start = 4.dp, end = 4.dp, bottom = 4.dp)
                 ) {
-                    // 레이어 A: 텍스트 (지정된 시스템 폰트 적용)
                     if (memoText.isNotEmpty()) {
                         Text(
                             text = memoText,
@@ -161,7 +174,6 @@ class FoldstItWidget : GlanceAppWidget() {
                         )
                     }
 
-                    // 레이어 B: 드로잉 손글씨 (투명 배경으로 텍스트 위에 1:1 오버레이)
                     if (hasBitmapDrawing && drawingFile != null) {
                         val bitmap = BitmapFactory.decodeFile(drawingFile.absolutePath)
                         if (bitmap != null) {
@@ -171,6 +183,11 @@ class FoldstItWidget : GlanceAppWidget() {
                                 modifier = GlanceModifier.fillMaxSize()
                             )
                         }
+                    } else if (memoText.isEmpty()) {
+                        Text(
+                            text = "터치하여 이 포스트잇을 편집하세요.",
+                            style = TextStyle(fontSize = 12.sp, color = ColorProvider(Color.Gray))
+                        )
                     }
                 }
             }
@@ -183,11 +200,19 @@ class FoldstItWidgetReceiver : GlanceAppWidgetReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
+
         if (intent.action == "com.example.foldstit.PIN_WIDGET_ASSIGN") {
-            val memoId = intent.getStringExtra("TARGET_MEMO_ID")
-            if (!memoId.isNullOrEmpty()) {
-                val prefs = context.getSharedPreferences("foldstit_data", Context.MODE_PRIVATE)
-                prefs.edit().putString("latest_memo_id", memoId).apply()
+            val appWidgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+            var memoId = intent.getStringExtra("TARGET_MEMO_ID")
+
+            if (memoId.isNullOrEmpty()) {
+                val pendingPrefs = context.getSharedPreferences("pending_pin_prefs", Context.MODE_PRIVATE)
+                memoId = pendingPrefs.getString("pending_memo_id", "")
+            }
+
+            if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID && !memoId.isNullOrEmpty()) {
+                val widgetMapPrefs = context.getSharedPreferences("widget_id_map", Context.MODE_PRIVATE)
+                widgetMapPrefs.edit().putString("widget_$appWidgetId", memoId).apply()
                 FoldstItWidget.notifyUpdate(context)
             }
         }
