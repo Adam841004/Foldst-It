@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextGeometricTransform
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -85,55 +86,23 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935), true)
 }
 
-// 엄선된 무료 한글 10종 서체 규격
-enum class MemoFont(val title: String, val downloadUrl: String, val fallbackFamily: FontFamily) {
-    DEFAULT("내 폰 기본체", "", FontFamily.Default),
-    PRETENDARD("프리텐다드", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard/packages/pretendard/dist/public/static/Pretendard-Regular.otf", FontFamily.SansSerif),
-    NANUM_GOTHIC("나눔고딕", "https://fonts.gstatic.com/s/nanumgothic/v24/PN_3Rfi-oW3hYwmKDpxS7F_z-7rVxCX9.ttf", FontFamily.SansSerif),
-    NANUM_MYEONGJO("나눔명조", "https://fonts.gstatic.com/s/nanummyeongjo/v23/B5HT3aRhP4q9-242u5m5s00t54T-xhf78A.ttf", FontFamily.Serif),
-    NANUM_PEN("나눔손글씨 펜", "https://fonts.gstatic.com/s/nanumpenscript/v23/6xK7dS1JmpHq4128uG-kZ8u-Wv7V7z8v.ttf", FontFamily.Cursive),
-    GOWUN_BATANG("고운바탕", "https://fonts.gstatic.com/s/gowunbatang/v8/ne-XzCqspL4Uv-0u8N76l811.ttf", FontFamily.Serif),
-    GOWUN_DODUM("고운돋움", "https://fonts.gstatic.com/s/gowundodum/v8/SZc-3Ff1kYyM-aHqW4oVv_h0qg.ttf", FontFamily.SansSerif),
-    BM_JUA("배민 주아체", "https://cdn.jsdelivr.net/gh/woowahan/fonts@master/BMJUA.otf", FontFamily.Default),
-    BLACK_HAN_SANS("검은고딕", "https://fonts.gstatic.com/s/blackhansans/v17/ea8Aad44W-AlhCd1CWyQk8r0.ttf", FontFamily.SansSerif),
-    MONO("클래식 타자기", "", FontFamily.Monospace)
-}
+// 안드로이드 OS 자체 내장 네이티브 폰트 직결 매퍼 (인터넷 다운로드 불필요, 즉시 한글 자형 변형)
+enum class MemoFont(val title: String, val systemFamilyName: String, val defaultWeight: FontWeight) {
+    DEFAULT("내 폰 기본체", "", FontWeight.Normal),
+    SLIM_GOTHIC("슬림 씬고딕", "sans-serif-thin", FontWeight.Thin),
+    LIGHT_GOTHIC("라이트 고딕", "sans-serif-light", FontWeight.Light),
+    CONDENSED("장체(압축고딕)", "sans-serif-condensed", FontWeight.Normal),
+    MYEONGJO("감성 명조체", "serif", FontWeight.Normal),
+    MONOSPACE("클래식 타자기", "monospace", FontWeight.Normal),
+    BLACK_HEAVY("초강력 먹체", "sans-serif-black", FontWeight.Black);
 
-object FontManager {
-    private val cache = mutableMapOf<String, FontFamily>()
-
-    fun getFontFamily(context: Context, font: MemoFont): FontFamily {
-        if (font == MemoFont.DEFAULT || font.downloadUrl.isEmpty()) return font.fallbackFamily
-        if (cache.containsKey(font.name)) return cache[font.name]!!
-
-        val dir = File(context.filesDir, "fonts").apply { if (!exists()) mkdirs() }
-        val ext = if (font.downloadUrl.endsWith(".otf")) "otf" else "ttf"
-        val file = File(dir, "${font.name}.$ext")
-
-        if (file.exists() && file.length() > 2048) {
-            try {
-                val tf = Typeface.createFromFile(file)
-                val ff = FontFamily(tf)
-                cache[font.name] = ff
-                return ff
-            } catch (_: Exception) {}
+    fun toFontFamily(): FontFamily {
+        if (systemFamilyName.isEmpty()) return FontFamily.Default
+        return try {
+            FontFamily(Typeface.create(systemFamilyName, Typeface.NORMAL))
+        } catch (_: Exception) {
+            FontFamily.Default
         }
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val conn = java.net.URL(font.downloadUrl).openConnection() as java.net.HttpURLConnection
-                conn.connectTimeout = 6000
-                conn.readTimeout = 6000
-                conn.inputStream.use { input ->
-                    FileOutputStream(file).use { output -> input.copyTo(output) }
-                }
-                if (file.exists() && file.length() > 2048) {
-                    val tf = Typeface.createFromFile(file)
-                    cache[font.name] = FontFamily(tf)
-                }
-            } catch (_: Exception) {}
-        }
-        return font.fallbackFamily
     }
 }
 
@@ -457,7 +426,7 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 온전한 원형 핀
+                    // 상단 원형 핀 (상단 여백 8dp)
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -503,9 +472,10 @@ fun PegboardScreen(
                             style = TextStyle(
                                 fontSize = 13.sp,
                                 color = memo.theme.textColor,
-                                fontFamily = FontManager.getFontFamily(context, memo.font),
-                                fontWeight = if (memo.isBold) FontWeight.Bold else FontWeight.Normal,
-                                fontStyle = if (memo.isItalic) FontStyle.Italic else FontStyle.Normal,
+                                fontFamily = memo.font.toFontFamily(),
+                                fontWeight = if (memo.isBold) FontWeight.Bold else memo.font.defaultWeight,
+                                // [핵심] 한글 이탤릭 전단 변형 (skewX 적용으로 100% 기울임 강제 실현)
+                                textGeometricTransform = if (memo.isItalic) TextGeometricTransform(skewX = -0.25f) else null,
                                 textDecoration = textDecor,
                                 lineHeight = 18.sp
                             ),
@@ -535,6 +505,7 @@ fun PegboardScreen(
             }
         }
 
+        // 다중 선택 액션 바
         if (isSelectionMode) {
             Card(
                 shape = RoundedCornerShape(32.dp),
@@ -641,6 +612,7 @@ fun PegboardScreen(
         }
     }
 
+    // 순차 핀 등록 팝업 다이얼로그
     if (widgetQueue.isNotEmpty() && currentQueueIndex < widgetQueue.size) {
         val currentTarget = widgetQueue[currentQueueIndex]
         AlertDialog(
@@ -648,7 +620,7 @@ fun PegboardScreen(
             title = { Text("위젯 등록 (${currentQueueIndex + 1}/${widgetQueue.size})", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("안드로이드 홈 런처 규정상 위젯은 한 번에 하나씩 배치됩니다.", fontSize = 13.sp, color = Color.Gray)
+                    Text("안드로이드 시스템 홈 런처의 규약에 따라 한 번에 하나씩 배치됩니다.", fontSize = 13.sp, color = Color.Gray)
                     Card(
                         colors = CardDefaults.cardColors(containerColor = currentTarget.theme.bgColor),
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
@@ -713,7 +685,6 @@ fun MemoEditorDialog(
     onSave: (MemoItem) -> Unit,
     onDelete: (String) -> Unit
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
     var memoText by remember { mutableStateOf(memo.text) }
     var currentTheme by remember { mutableStateOf(memo.theme) }
     var currentFont by remember { mutableStateOf(memo.font) }
@@ -768,6 +739,7 @@ fun MemoEditorDialog(
                                 Icon(Icons.Default.Create, contentDescription = "Pen", tint = if (isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
                             }
 
+                            // 엑셀 스타일 [B] [I] [U] [S] 버튼
                             TextButton(
                                 onClick = { isBold = !isBold },
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
@@ -821,6 +793,7 @@ fun MemoEditorDialog(
                         }
                     }
 
+                    // 폰트 & 테마 설정 패널
                     AnimatedVisibility(visible = showMemoSettings) {
                         Card(
                             shape = RoundedCornerShape(8.dp),
@@ -846,12 +819,12 @@ fun MemoEditorDialog(
                                     }
                                 }
 
-                                Text("추천 한글 폰트 10선", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("네이티브 한글 서체 목록", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 LazyRow(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    items(MemoFont.values().toList(), key = { it.name }) { f: MemoFont ->
+                                    items(MemoFont.values().toList(), key = { it.name }) { f ->
                                         OutlinedButton(
                                             onClick = { currentFont = f },
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
@@ -863,7 +836,8 @@ fun MemoEditorDialog(
                                                 f.title,
                                                 fontSize = 10.sp,
                                                 color = Color.Black,
-                                                fontFamily = FontManager.getFontFamily(context, f)
+                                                fontFamily = f.toFontFamily(),
+                                                fontWeight = f.defaultWeight
                                             )
                                         }
                                     }
@@ -917,9 +891,10 @@ fun MemoEditorDialog(
                             textStyle = TextStyle(
                                 fontSize = memoFontSize.sp,
                                 color = currentTheme.textColor,
-                                fontFamily = FontManager.getFontFamily(context, currentFont),
-                                fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
-                                fontStyle = if (isItalic) FontStyle.Italic else FontStyle.Normal,
+                                fontFamily = currentFont.toFontFamily(),
+                                fontWeight = if (isBold) FontWeight.Bold else currentFont.defaultWeight,
+                                // [핵심] 한글 이탤릭 실시간 전단 변형
+                                textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.25f) else null,
                                 textDecoration = activeDecor,
                                 lineHeight = (memoFontSize + 8).sp
                             ),
@@ -934,7 +909,9 @@ fun MemoEditorDialog(
                                         "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
                                         color = currentTheme.textColor.copy(alpha = 0.4f),
                                         fontSize = memoFontSize.sp,
-                                        fontFamily = FontManager.getFontFamily(context, currentFont)
+                                        fontFamily = currentFont.toFontFamily(),
+                                        fontWeight = if (isBold) FontWeight.Bold else currentFont.defaultWeight,
+                                        textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.25f) else null
                                     )
                                 }
                                 innerTextField()
