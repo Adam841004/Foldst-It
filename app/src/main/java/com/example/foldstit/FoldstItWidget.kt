@@ -24,6 +24,7 @@ import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.*
+import androidx.glance.text.FontFamily
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
@@ -71,6 +72,7 @@ class FoldstItWidget : GlanceAppWidget() {
 
             var memoText = ""
             var themeName = "PASTEL_YELLOW"
+            var fontName = "SANS"
 
             val jsonStr = boardPrefs.getString("memo_list_json", null)
             if (!jsonStr.isNullOrEmpty() && targetMemoId.isNotEmpty()) {
@@ -81,6 +83,7 @@ class FoldstItWidget : GlanceAppWidget() {
                         if (obj.optString("id") == targetMemoId) {
                             memoText = obj.optString("text", "")
                             themeName = obj.optString("theme", "PASTEL_YELLOW")
+                            fontName = obj.optString("font", "SANS")
                             break
                         }
                     }
@@ -92,6 +95,7 @@ class FoldstItWidget : GlanceAppWidget() {
                 themeName = legacyPrefs.getString("theme", "PASTEL_YELLOW") ?: "PASTEL_YELLOW"
             }
 
+            // 메인 화면과 1:1 완벽 동기화된 테마 색상 규격
             val (bgColor, textColor, pinColor) = when (themeName) {
                 "PASTEL_BLUE" -> Triple(Color(0xFFE1F5FE), Color(0xFF2C2C2C), Color(0xFFE53935))
                 "PASTEL_PINK" -> Triple(Color(0xFFFCE4EC), Color(0xFF2C2C2C), Color(0xFF43A047))
@@ -100,20 +104,27 @@ class FoldstItWidget : GlanceAppWidget() {
                 else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
             }
 
+            val widgetFontFamily = when (fontName) {
+                "SERIF" -> FontFamily.Serif
+                "CURSIVE" -> FontFamily.Cursive
+                "MONO" -> FontFamily.Monospace
+                else -> FontFamily.SansSerif
+            }
+
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
             val hasBitmapDrawing = drawingFile != null && drawingFile.exists()
 
-            // Glance 규격: actionStartActivity 제네릭 호출 (타입 매칭 오류 완전 해결)
             val clickAction = if (targetMemoId.isNotEmpty()) {
                 actionStartActivity<MainActivity>(actionParametersOf(memoIdKey to targetMemoId))
             } else {
                 actionStartActivity<MainActivity>()
             }
 
+            // 위젯 외형: 메인 타공판 카드와 똑같은 모서리 라운딩 및 압정 핀 룩앤필
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
-                    .cornerRadius(10.dp)
+                    .cornerRadius(8.dp)
                     .background(bgColor)
                     .clickable(clickAction)
                     .padding(10.dp)
@@ -123,6 +134,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     verticalAlignment = Alignment.Top,
                     horizontalAlignment = Alignment.Start
                 ) {
+                    // 상단 헤더: 압정 핀 그래픽 + 타이틀
                     Row(
                         modifier = GlanceModifier.fillMaxWidth().padding(bottom = 2.dp),
                         horizontalAlignment = Alignment.End,
@@ -142,17 +154,20 @@ class FoldstItWidget : GlanceAppWidget() {
                         )
                     }
 
+                    // 메모 텍스트 (지정된 폰트 패밀리 반영)
                     if (memoText.isNotEmpty()) {
                         Text(
                             text = memoText,
                             style = TextStyle(
                                 fontSize = 13.sp,
-                                color = ColorProvider(textColor)
+                                color = ColorProvider(textColor),
+                                fontFamily = widgetFontFamily
                             ),
                             maxLines = if (hasBitmapDrawing) 2 else 7
                         )
                     }
 
+                    // 손글씨 드로잉 비트맵 렌더링
                     if (hasBitmapDrawing && drawingFile != null) {
                         val bitmap = BitmapFactory.decodeFile(drawingFile.absolutePath)
                         if (bitmap != null) {
