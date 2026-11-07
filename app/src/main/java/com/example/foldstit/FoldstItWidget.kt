@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -24,11 +25,9 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
-import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.*
-import androidx.glance.text.FontFamily
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
@@ -62,27 +61,104 @@ class FoldstItWidget : GlanceAppWidget() {
             }
         }
 
-        fun getNotebookBackground(context: Context): Bitmap {
-            val file = File(context.cacheDir, "notebook_grid_clean.png")
+        // [핵심] 우측 하단이 접힌 진짜 종이 포스트잇 셰이프 비트맵 렌더러
+        fun getPostitShapeBackground(context: Context, themeName: String, memoId: String): Bitmap {
+            val file = File(context.cacheDir, "postit_bg_${themeName}_${memoId}.png")
             if (file.exists()) {
                 val b = BitmapFactory.decodeFile(file.absolutePath)
                 if (b != null) return b
             }
-            val bmp = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888)
+
+            val w = 500f
+            val h = 500f
+            val fold = 64f // 우측 하단 접힌 귀퉁이 크기
+
+            val bmp = Bitmap.createBitmap(w.toInt(), h.toInt(), Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bmp)
-            canvas.drawColor(android.graphics.Color.WHITE)
-            val paint = Paint().apply {
-                color = android.graphics.Color.parseColor("#388D6E63")
-                strokeWidth = 2f
+
+            val (bgColorInt, pinColorInt, hasLines) = when (themeName) {
+                "PASTEL_BLUE" -> Triple(android.graphics.Color.parseColor("#E1F5FE"), android.graphics.Color.parseColor("#E53935"), false)
+                "PASTEL_PINK" -> Triple(android.graphics.Color.parseColor("#FCE4EC"), android.graphics.Color.parseColor("#43A047"), false)
+                "PASTEL_GREEN" -> Triple(android.graphics.Color.parseColor("#E8F5E9"), android.graphics.Color.parseColor("#FFB300"), false)
+                "NOTEBOOK" -> Triple(android.graphics.Color.WHITE, android.graphics.Color.parseColor("#E53935"), true)
+                else -> Triple(android.graphics.Color.parseColor("#FFF9C4"), android.graphics.Color.parseColor("#1E88E5"), false)
             }
-            var y = 60f
-            while (y < 400f) {
-                canvas.drawLine(0f, y, 400f, y, paint)
-                y += 44f
+
+            // 1. 접힌 부분 아래 그림자
+            val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#33000000")
             }
+            val shadowPath = Path().apply {
+                moveTo(w - fold - 10f, h - fold - 10f)
+                lineTo(w, h - fold)
+                lineTo(w - fold, h)
+                close()
+            }
+            canvas.drawPath(shadowPath, shadowPaint)
+
+            // 2. 포스트잇 본체 종이 (우측 하단이 대각선으로 깎인 다각형)
+            val paperPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = bgColorInt
+                style = Paint.Style.FILL
+            }
+            val paperPath = Path().apply {
+                moveTo(16f, 0f)
+                lineTo(w - 16f, 0f)
+                quadTo(w, 0f, w, 16f)
+                lineTo(w, h - fold)
+                lineTo(w - fold, h)
+                lineTo(16f, h)
+                quadTo(0f, h, 0f, h - 16f)
+                lineTo(0f, 16f)
+                quadTo(0f, 0f, 16f, 0f)
+                close()
+            }
+            canvas.drawPath(paperPath, paperPaint)
+
+            // 3. 연습장 줄눈금
+            if (hasLines) {
+                val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = android.graphics.Color.parseColor("#388D6E63")
+                    strokeWidth = 2.5f
+                }
+                var y = 75f
+                while (y < h - 40f) {
+                    canvas.drawLine(15f, y, w - 15f, y, linePaint)
+                    y += 50f
+                }
+            }
+
+            // 4. 우측 하단 접혀 올라온 귀퉁이 삼각형 (살짝 어두운 톤)
+            val foldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#E0D8A8")
+                style = Paint.Style.FILL
+            }
+            val foldPath = Path().apply {
+                moveTo(w - fold, h)
+                lineTo(w, h - fold)
+                lineTo(w - fold, h - fold)
+                close()
+            }
+            canvas.drawPath(foldPath, foldPaint)
+
+            // 5. 상단 중앙 압정 핀 (입체 원형)
+            val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = pinColorInt
+                style = Paint.Style.FILL
+            }
+            canvas.drawCircle(w / 2f, 26f, 16f, pinPaint)
+
+            val pinBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
+            }
+            canvas.drawCircle(w / 2f, 26f, 16f, pinBorderPaint)
+
             try {
-                java.io.FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+                FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
             } catch (_: Exception) {}
+
             return bmp
         }
     }
@@ -130,19 +206,11 @@ class FoldstItWidget : GlanceAppWidget() {
                 } catch (_: Exception) {}
             }
 
-            val (bgColor, textColor, pinColor) = when (themeName) {
-                "PASTEL_BLUE" -> Triple(Color(0xFFE1F5FE), Color(0xFF2C2C2C), Color(0xFFE53935))
-                "PASTEL_PINK" -> Triple(Color(0xFFFCE4EC), Color(0xFF2C2C2C), Color(0xFF43A047))
-                "PASTEL_GREEN" -> Triple(Color(0xFFE8F5E9), Color(0xFF2C2C2C), Color(0xFFFFB300))
-                "NOTEBOOK" -> Triple(Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFD84315))
-                else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
-            }
-
-            // 1. 에셋 폰트가 직접 렌더링된 텍스트 비트맵 확인 (홈 화면에서도 폰트 100% 동일 표시)
+            // 고화질 단어별 서식 비트맵
             val textFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "text_${targetMemoId}.png") else null
             val hasTextBitmap = textFile != null && textFile.exists()
 
-            // 2. 드로잉 비트맵 확인
+            // 손글씨 드로잉 비트맵
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
             val hasBitmapDrawing = drawingFile != null && drawingFile.exists()
 
@@ -152,64 +220,45 @@ class FoldstItWidget : GlanceAppWidget() {
                 actionStartActivity<MainActivity>()
             }
 
+            // 시스템 둥근 사각 테두리를 없애기 위해 컨테이너 배경을 투명으로 설정
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
-                    .cornerRadius(8.dp)
-                    .background(bgColor)
+                    .background(Color.Transparent)
                     .clickable(clickAction)
-                    .padding(6.dp)
             ) {
-                // 연습장 모드 줄눈금
-                if (themeName == "NOTEBOOK") {
-                    val gridBmp = getNotebookBackground(context)
-                    Image(
-                        provider = ImageProvider(gridBmp),
-                        contentDescription = "Lines Grid",
-                        modifier = GlanceModifier.fillMaxSize()
-                    )
-                }
+                // 레이어 1: 우측 하단이 접힌 종이 포스트잇 셰이프
+                val postitBgBmp = getPostitShapeBackground(context, themeName, targetMemoId)
+                Image(
+                    provider = ImageProvider(postitBgBmp),
+                    contentDescription = "Post-it Shape Paper",
+                    modifier = GlanceModifier.fillMaxSize()
+                )
 
-                // 온전한 원형 핀
-                Row(
-                    modifier = GlanceModifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Box(
-                        modifier = GlanceModifier
-                            .size(14.dp)
-                            .cornerRadius(7.dp)
-                            .background(pinColor)
-                    ) {}
-                }
-
-                // 본문 오버레이: 텍스트 비트맵 + 손글씨 비트맵
+                // 레이어 2: 본문 (단어별 폰트/색상 텍스트 비트맵 + 손글씨 오버레이)
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
-                        .padding(top = 18.dp, start = 6.dp, end = 6.dp, bottom = 4.dp)
+                        .padding(top = 22.dp, start = 8.dp, end = 12.dp, bottom = 14.dp)
                 ) {
-                    // 레이어 A: 나눔손글씨 폰트/크기가 100% 구워진 텍스트 이미지
                     if (hasTextBitmap && textFile != null) {
                         val txtBmp = BitmapFactory.decodeFile(textFile.absolutePath)
                         if (txtBmp != null) {
                             Image(
                                 provider = ImageProvider(txtBmp),
-                                contentDescription = "Styled Text",
+                                contentDescription = "Rich Text",
                                 modifier = GlanceModifier.fillMaxSize()
                             )
                         }
                     } else if (memoText.isNotEmpty()) {
-                        // fallback 일반 텍스트
                         Text(
                             text = memoText,
-                            style = TextStyle(fontSize = 13.sp, color = ColorProvider(textColor)),
+                            style = TextStyle(fontSize = 13.sp, color = ColorProvider(Color.Black)),
                             maxLines = 8,
                             modifier = GlanceModifier.fillMaxSize()
                         )
                     }
 
-                    // 레이어 B: 다채색 드로잉 손글씨 오버레이
                     if (hasBitmapDrawing && drawingFile != null) {
                         val drawBmp = BitmapFactory.decodeFile(drawingFile.absolutePath)
                         if (drawBmp != null) {
