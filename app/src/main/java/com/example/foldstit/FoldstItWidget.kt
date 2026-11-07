@@ -4,7 +4,10 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -58,6 +61,31 @@ class FoldstItWidget : GlanceAppWidget() {
                 e.printStackTrace()
             }
         }
+
+        // 연습장 줄눈금 비트맵 생성 캐싱
+        fun getNotebookBackground(context: Context): Bitmap {
+            val file = File(context.cacheDir, "notebook_grid_bg.png")
+            if (file.exists()) {
+                val b = BitmapFactory.decodeFile(file.absolutePath)
+                if (b != null) return b
+            }
+            val bmp = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            canvas.drawColor(android.graphics.Color.WHITE)
+            val paint = Paint().apply {
+                color = android.graphics.Color.parseColor("#448D6E63")
+                strokeWidth = 2.5f
+            }
+            var y = 50f
+            while (y < 400f) {
+                canvas.drawLine(0f, y, 400f, y, paint)
+                y += 45f
+            }
+            try {
+                java.io.FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+            } catch (_: Exception) {}
+            return bmp
+        }
     }
 
     override val sizeMode: SizeMode = SizeMode.Responsive(
@@ -69,17 +97,14 @@ class FoldstItWidget : GlanceAppWidget() {
             val boardPrefs = context.getSharedPreferences("foldstit_board", Context.MODE_PRIVATE)
             val widgetMapPrefs = context.getSharedPreferences("widget_id_map", Context.MODE_PRIVATE)
 
-            // 1. 개별 위젯 ID 확인
             val appWidgetId = try {
                 GlanceAppWidgetManager(context).getAppWidgetId(id)
             } catch (_: Exception) { -1 }
 
-            // 2. 이 위젯에 매핑된 고유 memoId 가져오기
             var targetMemoId = if (appWidgetId != -1) {
                 widgetMapPrefs.getString("widget_$appWidgetId", "") ?: ""
             } else ""
 
-            // fallback (초기 등록 시 매핑이 아직 비어있다면 대기 중인 메모 할당)
             if (targetMemoId.isEmpty()) {
                 val pendingPrefs = context.getSharedPreferences("pending_pin_prefs", Context.MODE_PRIVATE)
                 targetMemoId = pendingPrefs.getString("pending_memo_id", "") ?: ""
@@ -90,9 +115,8 @@ class FoldstItWidget : GlanceAppWidget() {
 
             var memoText = ""
             var themeName = "PASTEL_YELLOW"
-            var fontName = "SYSTEM_ONEUI"
+            var fontName = "DEFAULT"
 
-            // 3. 해당 메모의 데이터 추출
             val jsonStr = boardPrefs.getString("memo_list_json", null)
             if (!jsonStr.isNullOrEmpty() && targetMemoId.isNotEmpty()) {
                 try {
@@ -102,26 +126,26 @@ class FoldstItWidget : GlanceAppWidget() {
                         if (obj.optString("id") == targetMemoId) {
                             memoText = obj.optString("text", "")
                             themeName = obj.optString("theme", "PASTEL_YELLOW")
-                            fontName = obj.optString("font", "SYSTEM_ONEUI")
+                            fontName = obj.optString("font", "DEFAULT")
                             break
                         }
                     }
                 } catch (_: Exception) {}
             }
 
-            // 4. 앱 타공판 카드와 1:1 완벽 일치하는 테마 규격
+            // 앱 메인 화면과 100% 동일한 테마 매핑 (배경, 글자, 핀, 테두리)
             val (bgColor, textColor, pinColor) = when (themeName) {
                 "PASTEL_BLUE" -> Triple(Color(0xFFE1F5FE), Color(0xFF2C2C2C), Color(0xFFE53935))
                 "PASTEL_PINK" -> Triple(Color(0xFFFCE4EC), Color(0xFF2C2C2C), Color(0xFF43A047))
                 "PASTEL_GREEN" -> Triple(Color(0xFFE8F5E9), Color(0xFF2C2C2C), Color(0xFFFFB300))
-                "NOTEBOOK" -> Triple(Color(0xFFFFFDF9), Color(0xFF1A237E), Color(0xFFD84315))
+                "NOTEBOOK" -> Triple(Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935))
                 else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
             }
 
             val widgetFontFamily = when (fontName) {
-                "SYSTEM_SERIF" -> FontFamily.Serif
-                "SYSTEM_MONO" -> FontFamily.Monospace
-                else -> FontFamily.SansSerif
+                "NANUM_MYEONGJO" -> FontFamily.Serif
+                "ROBOTO" -> FontFamily.SansSerif
+                else -> FontFamily.Default
             }
 
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
@@ -133,16 +157,26 @@ class FoldstItWidget : GlanceAppWidget() {
                 actionStartActivity<MainActivity>()
             }
 
-            // 위젯 외형: 앱 타공판 카드와 똑같은 둥근 모서리 및 상단 중앙 16dp 원형 핀
+            // 포스트잇 위젯 컨테이너 (앱 메인 카드와 동일 규격)
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
                     .cornerRadius(8.dp)
                     .background(bgColor)
                     .clickable(clickAction)
-                    .padding(8.dp)
+                    .padding(6.dp)
             ) {
-                // 상단 중앙 핀
+                // 1. 연습장 모드일 경우 가로 줄눈금 배경 주입
+                if (themeName == "NOTEBOOK") {
+                    val gridBmp = getNotebookBackground(context)
+                    Image(
+                        provider = ImageProvider(gridBmp),
+                        contentDescription = "Lines Grid",
+                        modifier = GlanceModifier.fillMaxSize()
+                    )
+                }
+
+                // 2. 상단 중앙 압정 핀 (앱과 똑같은 16dp 크기 및 색상)
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -155,7 +189,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     ) {}
                 }
 
-                // 본문: 텍스트와 드로잉 손글씨 완전 오버레이
+                // 3. 본문 오버레이 (텍스트 + 손글씨)
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
@@ -185,7 +219,7 @@ class FoldstItWidget : GlanceAppWidget() {
                         }
                     } else if (memoText.isEmpty()) {
                         Text(
-                            text = "터치하여 이 포스트잇을 편집하세요.",
+                            text = "터치하여 편집...",
                             style = TextStyle(fontSize = 12.sp, color = ColorProvider(Color.Gray))
                         )
                     }
