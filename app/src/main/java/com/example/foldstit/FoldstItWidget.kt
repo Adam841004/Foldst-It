@@ -33,6 +33,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import org.json.JSONArray
 import java.io.File
+import java.io.FileOutputStream
 
 class FoldstItWidget : GlanceAppWidget() {
 
@@ -61,7 +62,7 @@ class FoldstItWidget : GlanceAppWidget() {
             }
         }
 
-        // [핵심] 우측 하단이 접힌 진짜 종이 포스트잇 셰이프 비트맵 렌더러
+        // 우측 하단이 접힌 종이 포스트잇 셰이프 비트맵 렌더러
         fun getPostitShapeBackground(context: Context, themeName: String, memoId: String): Bitmap {
             val file = File(context.cacheDir, "postit_bg_${themeName}_${memoId}.png")
             if (file.exists()) {
@@ -96,7 +97,7 @@ class FoldstItWidget : GlanceAppWidget() {
             }
             canvas.drawPath(shadowPath, shadowPaint)
 
-            // 2. 포스트잇 본체 종이 (우측 하단이 대각선으로 깎인 다각형)
+            // 2. 포스트잇 본체 종이 (우측 하단 대각선 컷아웃)
             val paperPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = bgColorInt
                 style = Paint.Style.FILL
@@ -128,7 +129,7 @@ class FoldstItWidget : GlanceAppWidget() {
                 }
             }
 
-            // 4. 우측 하단 접혀 올라온 귀퉁이 삼각형 (살짝 어두운 톤)
+            // 4. 우측 하단 접혀 올라온 귀퉁이 삼각형
             val foldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = android.graphics.Color.parseColor("#E0D8A8")
                 style = Paint.Style.FILL
@@ -141,7 +142,7 @@ class FoldstItWidget : GlanceAppWidget() {
             }
             canvas.drawPath(foldPath, foldPaint)
 
-            // 5. 상단 중앙 압정 핀 (입체 원형)
+            // 5. 상단 중앙 압정 핀
             val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = pinColorInt
                 style = Paint.Style.FILL
@@ -206,11 +207,9 @@ class FoldstItWidget : GlanceAppWidget() {
                 } catch (_: Exception) {}
             }
 
-            // 고화질 단어별 서식 비트맵
             val textFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "text_${targetMemoId}.png") else null
             val hasTextBitmap = textFile != null && textFile.exists()
 
-            // 손글씨 드로잉 비트맵
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
             val hasBitmapDrawing = drawingFile != null && drawingFile.exists()
 
@@ -220,14 +219,12 @@ class FoldstItWidget : GlanceAppWidget() {
                 actionStartActivity<MainActivity>()
             }
 
-            // 시스템 둥근 사각 테두리를 없애기 위해 컨테이너 배경을 투명으로 설정
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
                     .background(Color.Transparent)
                     .clickable(clickAction)
             ) {
-                // 레이어 1: 우측 하단이 접힌 종이 포스트잇 셰이프
                 val postitBgBmp = getPostitShapeBackground(context, themeName, targetMemoId)
                 Image(
                     provider = ImageProvider(postitBgBmp),
@@ -235,7 +232,6 @@ class FoldstItWidget : GlanceAppWidget() {
                     modifier = GlanceModifier.fillMaxSize()
                 )
 
-                // 레이어 2: 본문 (단어별 폰트/색상 텍스트 비트맵 + 손글씨 오버레이)
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
