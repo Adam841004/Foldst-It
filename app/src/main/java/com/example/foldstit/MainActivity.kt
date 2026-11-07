@@ -11,6 +11,9 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -86,7 +89,6 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935), true)
 }
 
-// assets/fonts/ 실제 업로드 파일명 1:1 매핑
 enum class MemoFont(val title: String, val fileName: String) {
     DEFAULT("내 폰 기본체", ""),
     NANUM_PEN("나눔손글씨 펜", "NanumPen.ttf"),
@@ -97,21 +99,25 @@ enum class MemoFont(val title: String, val fileName: String) {
 }
 
 object LocalFontLoader {
-    private val typefaceCache = mutableMapOf<String, FontFamily>()
+    private val typefaceCache = mutableMapOf<String, Typeface>()
 
-    fun getFontFamily(context: Context, font: MemoFont): FontFamily {
-        if (font.fileName.isEmpty()) return FontFamily.Default
+    fun getTypeface(context: Context, font: MemoFont): Typeface {
+        if (font.fileName.isEmpty()) return Typeface.DEFAULT
         if (typefaceCache.containsKey(font.name)) return typefaceCache[font.name]!!
 
         return try {
             val tf = Typeface.createFromAsset(context.assets, "fonts/${font.fileName}")
-            val ff = FontFamily(tf)
-            typefaceCache[font.name] = ff
-            ff
+            typefaceCache[font.name] = tf
+            tf
         } catch (e: Exception) {
             e.printStackTrace()
-            FontFamily.Default
+            Typeface.DEFAULT
         }
+    }
+
+    fun getFontFamily(context: Context, font: MemoFont): FontFamily {
+        val tf = getTypeface(context, font)
+        return FontFamily(tf)
     }
 }
 
@@ -248,6 +254,62 @@ fun PegboardScreen(
         }
     }
 
+    // [핵심] 위젯 전용 고화질 텍스트 렌더링 (홈 화면에서도 폰트 100% 동일 표시)
+    fun renderTextBitmap(memo: MemoItem) {
+        try {
+            if (memo.text.isEmpty()) {
+                val file = File(context.filesDir, "text_${memo.id}.png")
+                if (file.exists()) file.delete()
+                return
+            }
+
+            val bmpWidth = 600
+            val bmpHeight = 600
+            val bmp = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+
+            val baseTf = LocalFontLoader.getTypeface(context, memo.font)
+            val styledTf = if (memo.isBold) Typeface.create(baseTf, Typeface.BOLD) else baseTf
+
+            val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = when (memo.theme) {
+                    NoteTheme.NOTEBOOK -> android.graphics.Color.parseColor("#1A237E")
+                    else -> android.graphics.Color.parseColor("#2C2C2C")
+                }
+                textSize = (memo.fontSize * 2.8f).coerceIn(32f, 72f)
+                typeface = styledTf
+                if (memo.isItalic) textSkewX = -0.28f
+                if (memo.isUnderline) isUnderlineText = true
+                if (memo.isStrikethrough) isStrikeThruText = true
+            }
+
+            val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                StaticLayout.Builder.obtain(memo.text, 0, memo.text.length, paint, bmpWidth - 40)
+                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                    .setLineSpacing(6f, 1.15f)
+                    .setIncludePad(false)
+                    .setMaxLines(8)
+                    .build()
+            } else {
+                @Suppress("DEPRECATION")
+                StaticLayout(
+                    memo.text, paint, bmpWidth - 40,
+                    Layout.Alignment.ALIGN_NORMAL, 1.15f, 6f, false
+                )
+            }
+
+            canvas.save()
+            canvas.translate(20f, 20f)
+            staticLayout.draw(canvas)
+            canvas.restore()
+
+            val textFile = File(context.filesDir, "text_${memo.id}.png")
+            FileOutputStream(textFile).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun saveAllMemos() {
         try {
             val arr = JSONArray()
@@ -285,8 +347,11 @@ fun PegboardScreen(
                 }
                 arr.put(obj)
 
-                if (memo.strokes.isNotEmpty()) {
-                    CoroutineScope(Dispatchers.IO).launch {
+                // 위젯 렌더러용 텍스트 & 드로잉 비트맵 동시 생성
+                CoroutineScope(Dispatchers.IO).launch {
+                    renderTextBitmap(memo)
+
+                    if (memo.strokes.isNotEmpty()) {
                         try {
                             val bmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
                             val canvas = android.graphics.Canvas(bmp)
@@ -309,10 +374,10 @@ fun PegboardScreen(
                             val outFile = File(context.filesDir, "drawing_${memo.id}.png")
                             FileOutputStream(outFile).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
                         } catch (_: Exception) {}
+                    } else {
+                        val outFile = File(context.filesDir, "drawing_${memo.id}.png")
+                        if (outFile.exists()) outFile.delete()
                     }
-                } else {
-                    val outFile = File(context.filesDir, "drawing_${memo.id}.png")
-                    if (outFile.exists()) outFile.delete()
                 }
             }
             prefs.edit().putString("memo_list_json", arr.toString()).apply()
@@ -478,13 +543,13 @@ fun PegboardScreen(
                         Text(
                             text = memo.text,
                             style = TextStyle(
-                                fontSize = 13.sp,
+                                fontSize = memo.fontSize.sp,
                                 color = memo.theme.textColor,
                                 fontFamily = LocalFontLoader.getFontFamily(context, memo.font),
                                 fontWeight = if (memo.isBold) FontWeight.ExtraBold else FontWeight.Normal,
                                 textGeometricTransform = if (memo.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
                                 textDecoration = textDecor,
-                                lineHeight = 18.sp
+                                lineHeight = (memo.fontSize + 6).sp
                             ),
                             maxLines = 6,
                             modifier = Modifier.fillMaxSize()
@@ -730,23 +795,27 @@ fun MemoEditorDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.55f))
-                .padding(20.dp),
+                .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = currentTheme.bgColor),
                 elevation = CardDefaults.cardElevation(defaultElevation = 14.dp),
-                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f)
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.94f)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+                        // 1단 헤더: 모드 전환, 엑셀식 서식, 폰트 크기 증감 툴바
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 IconButton(onClick = { isPenMode = false; showDrawingPalette = false }) {
                                     Icon(Icons.Default.Keyboard, contentDescription = "Text", tint = if (!isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
                                 }
@@ -765,41 +834,77 @@ fun MemoEditorDialog(
                                     )
                                 }
 
+                                // 엑셀 스타일 [B] [I] [U] [S]
                                 TextButton(
                                     onClick = { isBold = !isBold },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
                                     colors = ButtonDefaults.textButtonColors(
                                         containerColor = if (isBold) Color(0xFF1976D2) else Color.Transparent,
                                         contentColor = if (isBold) Color.White else currentTheme.textColor
                                     )
-                                ) { Text("B", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp) }
+                                ) { Text("B", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp) }
 
                                 TextButton(
                                     onClick = { isItalic = !isItalic },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
                                     colors = ButtonDefaults.textButtonColors(
                                         containerColor = if (isItalic) Color(0xFF1976D2) else Color.Transparent,
                                         contentColor = if (isItalic) Color.White else currentTheme.textColor
                                     )
-                                ) { Text("I", fontStyle = FontStyle.Italic, fontSize = 14.sp) }
+                                ) { Text("I", fontStyle = FontStyle.Italic, fontSize = 13.sp) }
 
                                 TextButton(
                                     onClick = { isUnderline = !isUnderline },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
                                     colors = ButtonDefaults.textButtonColors(
                                         containerColor = if (isUnderline) Color(0xFF1976D2) else Color.Transparent,
                                         contentColor = if (isUnderline) Color.White else currentTheme.textColor
                                     )
-                                ) { Text("U", style = TextStyle(textDecoration = TextDecoration.Underline), fontSize = 14.sp) }
+                                ) { Text("U", style = TextStyle(textDecoration = TextDecoration.Underline), fontSize = 13.sp) }
 
                                 TextButton(
                                     onClick = { isStrikethrough = !isStrikethrough },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
                                     colors = ButtonDefaults.textButtonColors(
                                         containerColor = if (isStrikethrough) Color(0xFF1976D2) else Color.Transparent,
                                         contentColor = if (isStrikethrough) Color.White else currentTheme.textColor
                                     )
-                                ) { Text("S", style = TextStyle(textDecoration = TextDecoration.LineThrough), fontSize = 14.sp) }
+                                ) { Text("S", style = TextStyle(textDecoration = TextDecoration.LineThrough), fontSize = 13.sp) }
+
+                                // [신규] 엑셀 스타일 폰트 크기 증감 툴바
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color.Black.copy(alpha = 0.06f))
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        "-",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = currentTheme.textColor,
+                                        modifier = Modifier
+                                            .clickable { if (memoFontSize > 12) memoFontSize -= 2 }
+                                            .padding(horizontal = 4.dp)
+                                    )
+                                    Text(
+                                        "${memoFontSize}pt",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = currentTheme.textColor,
+                                        modifier = Modifier.padding(horizontal = 3.dp)
+                                    )
+                                    Text(
+                                        "+",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = currentTheme.textColor,
+                                        modifier = Modifier
+                                            .clickable { if (memoFontSize < 34) memoFontSize += 2 }
+                                            .padding(horizontal = 4.dp)
+                                    )
+                                }
                             }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -818,7 +923,7 @@ fun MemoEditorDialog(
                             }
                         }
 
-                        // 상단 폰트 & 테마 설정 패널 (업로드된 5종 한글 폰트 목록)
+                        // 상단 폰트 & 테마 설정 패널
                         AnimatedVisibility(visible = showMemoSettings) {
                             Card(
                                 shape = RoundedCornerShape(8.dp),
@@ -1010,7 +1115,6 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // 다크 플로팅 드로잉 팔레트
                     if (isPenMode && showDrawingPalette) {
                         Card(
                             shape = RoundedCornerShape(24.dp),
