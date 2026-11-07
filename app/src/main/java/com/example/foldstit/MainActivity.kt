@@ -86,7 +86,7 @@ enum class NoteTheme(
     NOTEBOOK("연습장", Color(0xFFFFFFFF), Color(0xFF1A237E), Color(0xFFE53935), true)
 }
 
-// 안드로이드 OS 자체 내장 네이티브 폰트 직결 매퍼 (인터넷 다운로드 불필요, 즉시 한글 자형 변형)
+// 안드로이드 OS 내장 시스템 서체 직결 (네트워크 실패 원천 차단)
 enum class MemoFont(val title: String, val systemFamilyName: String, val defaultWeight: FontWeight) {
     DEFAULT("내 폰 기본체", "", FontWeight.Normal),
     SLIM_GOTHIC("슬림 씬고딕", "sans-serif-thin", FontWeight.Thin),
@@ -426,7 +426,7 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 상단 원형 핀 (상단 여백 8dp)
+                    // 온전한 원형 핀
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -474,7 +474,6 @@ fun PegboardScreen(
                                 color = memo.theme.textColor,
                                 fontFamily = memo.font.toFontFamily(),
                                 fontWeight = if (memo.isBold) FontWeight.Bold else memo.font.defaultWeight,
-                                // [핵심] 한글 이탤릭 전단 변형 (skewX 적용으로 100% 기울임 강제 실현)
                                 textGeometricTransform = if (memo.isItalic) TextGeometricTransform(skewX = -0.25f) else null,
                                 textDecoration = textDecor,
                                 lineHeight = 18.sp
@@ -505,7 +504,6 @@ fun PegboardScreen(
             }
         }
 
-        // 다중 선택 액션 바
         if (isSelectionMode) {
             Card(
                 shape = RoundedCornerShape(32.dp),
@@ -612,7 +610,6 @@ fun PegboardScreen(
         }
     }
 
-    // 순차 핀 등록 팝업 다이얼로그
     if (widgetQueue.isNotEmpty() && currentQueueIndex < widgetQueue.size) {
         val currentTarget = widgetQueue[currentQueueIndex]
         AlertDialog(
@@ -739,7 +736,6 @@ fun MemoEditorDialog(
                                 Icon(Icons.Default.Create, contentDescription = "Pen", tint = if (isPenMode) Color(0xFF1976D2) else currentTheme.textColor)
                             }
 
-                            // 엑셀 스타일 [B] [I] [U] [S] 버튼
                             TextButton(
                                 onClick = { isBold = !isBold },
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
@@ -793,7 +789,6 @@ fun MemoEditorDialog(
                         }
                     }
 
-                    // 폰트 & 테마 설정 패널
                     AnimatedVisibility(visible = showMemoSettings) {
                         Card(
                             shape = RoundedCornerShape(8.dp),
@@ -893,7 +888,6 @@ fun MemoEditorDialog(
                                 color = currentTheme.textColor,
                                 fontFamily = currentFont.toFontFamily(),
                                 fontWeight = if (isBold) FontWeight.Bold else currentFont.defaultWeight,
-                                // [핵심] 한글 이탤릭 실시간 전단 변형
                                 textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.25f) else null,
                                 textDecoration = activeDecor,
                                 lineHeight = (memoFontSize + 8).sp
@@ -906,12 +900,14 @@ fun MemoEditorDialog(
                             decorationBox = { innerTextField ->
                                 if (memoText.isEmpty() && strokes.isEmpty()) {
                                     Text(
-                                        "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
-                                        color = currentTheme.textColor.copy(alpha = 0.4f),
-                                        fontSize = memoFontSize.sp,
-                                        fontFamily = currentFont.toFontFamily(),
-                                        fontWeight = if (isBold) FontWeight.Bold else currentFont.defaultWeight,
-                                        textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.25f) else null
+                                        text = "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
+                                        style = TextStyle(
+                                            color = currentTheme.textColor.copy(alpha = 0.4f),
+                                            fontSize = memoFontSize.sp,
+                                            fontFamily = currentFont.toFontFamily(),
+                                            fontWeight = if (isBold) FontWeight.Bold else currentFont.defaultWeight,
+                                            textGeometricTransform = if (isItalic) TextGeometricTransform(skewX = -0.25f) else null
+                                        )
                                     )
                                 }
                                 innerTextField()
