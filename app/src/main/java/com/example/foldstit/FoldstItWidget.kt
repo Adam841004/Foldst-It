@@ -29,6 +29,8 @@ import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.*
 import androidx.glance.text.FontFamily
+import androidx.glance.text.FontStyle
+import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
@@ -114,7 +116,8 @@ class FoldstItWidget : GlanceAppWidget() {
 
             var memoText = ""
             var themeName = "PASTEL_YELLOW"
-            var fontName = "DEFAULT"
+            var isBold = false
+            var isItalic = false
 
             val jsonStr = boardPrefs.getString("memo_list_json", null)
             if (!jsonStr.isNullOrEmpty() && targetMemoId.isNotEmpty()) {
@@ -125,7 +128,8 @@ class FoldstItWidget : GlanceAppWidget() {
                         if (obj.optString("id") == targetMemoId) {
                             memoText = obj.optString("text", "")
                             themeName = obj.optString("theme", "PASTEL_YELLOW")
-                            fontName = obj.optString("font", "DEFAULT")
+                            isBold = obj.optBoolean("isBold", false)
+                            isItalic = obj.optBoolean("isItalic", false)
                             break
                         }
                     }
@@ -140,12 +144,6 @@ class FoldstItWidget : GlanceAppWidget() {
                 else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
             }
 
-            val widgetFontFamily: FontFamily? = when (fontName) {
-                "MYEONGJO", "COOL_JAZZ" -> FontFamily.Serif
-                "MONO" -> FontFamily.Monospace
-                else -> null
-            }
-
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
             val hasBitmapDrawing = drawingFile != null && drawingFile.exists()
 
@@ -155,7 +153,6 @@ class FoldstItWidget : GlanceAppWidget() {
                 actionStartActivity<MainActivity>()
             }
 
-            // 위젯 프레임: 테두리 없이 둥근 모서리와 은은한 여백
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
@@ -164,7 +161,6 @@ class FoldstItWidget : GlanceAppWidget() {
                     .clickable(clickAction)
                     .padding(6.dp)
             ) {
-                // 연습장 줄눈금
                 if (themeName == "NOTEBOOK") {
                     val gridBmp = getNotebookBackground(context)
                     Image(
@@ -174,7 +170,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     )
                 }
 
-                // 온전한 원형 핀 (상단 안쪽에 위치하여 잘림 없음)
+                // 온전한 원형 핀
                 Row(
                     modifier = GlanceModifier.fillMaxWidth().padding(top = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -187,7 +183,6 @@ class FoldstItWidget : GlanceAppWidget() {
                     ) {}
                 }
 
-                // 본문 오버레이
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
@@ -199,7 +194,8 @@ class FoldstItWidget : GlanceAppWidget() {
                             style = TextStyle(
                                 fontSize = 13.sp,
                                 color = ColorProvider(textColor),
-                                fontFamily = widgetFontFamily
+                                fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+                                fontStyle = if (isItalic) FontStyle.Italic else FontStyle.Normal
                             ),
                             maxLines = 8,
                             modifier = GlanceModifier.fillMaxSize()
