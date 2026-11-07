@@ -29,8 +29,6 @@ import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.*
 import androidx.glance.text.FontFamily
-import androidx.glance.text.FontStyle
-import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
@@ -116,8 +114,6 @@ class FoldstItWidget : GlanceAppWidget() {
 
             var memoText = ""
             var themeName = "PASTEL_YELLOW"
-            var isBold = false
-            var isItalic = false
 
             val jsonStr = boardPrefs.getString("memo_list_json", null)
             if (!jsonStr.isNullOrEmpty() && targetMemoId.isNotEmpty()) {
@@ -128,8 +124,6 @@ class FoldstItWidget : GlanceAppWidget() {
                         if (obj.optString("id") == targetMemoId) {
                             memoText = obj.optString("text", "")
                             themeName = obj.optString("theme", "PASTEL_YELLOW")
-                            isBold = obj.optBoolean("isBold", false)
-                            isItalic = obj.optBoolean("isItalic", false)
                             break
                         }
                     }
@@ -144,6 +138,11 @@ class FoldstItWidget : GlanceAppWidget() {
                 else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
             }
 
+            // 1. 에셋 폰트가 직접 렌더링된 텍스트 비트맵 확인 (홈 화면에서도 폰트 100% 동일 표시)
+            val textFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "text_${targetMemoId}.png") else null
+            val hasTextBitmap = textFile != null && textFile.exists()
+
+            // 2. 드로잉 비트맵 확인
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
             val hasBitmapDrawing = drawingFile != null && drawingFile.exists()
 
@@ -161,6 +160,7 @@ class FoldstItWidget : GlanceAppWidget() {
                     .clickable(clickAction)
                     .padding(6.dp)
             ) {
+                // 연습장 모드 줄눈금
                 if (themeName == "NOTEBOOK") {
                     val gridBmp = getNotebookBackground(context)
                     Image(
@@ -183,35 +183,43 @@ class FoldstItWidget : GlanceAppWidget() {
                     ) {}
                 }
 
+                // 본문 오버레이: 텍스트 비트맵 + 손글씨 비트맵
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
                         .padding(top = 18.dp, start = 6.dp, end = 6.dp, bottom = 4.dp)
                 ) {
-                    if (memoText.isNotEmpty()) {
+                    // 레이어 A: 나눔손글씨 폰트/크기가 100% 구워진 텍스트 이미지
+                    if (hasTextBitmap && textFile != null) {
+                        val txtBmp = BitmapFactory.decodeFile(textFile.absolutePath)
+                        if (txtBmp != null) {
+                            Image(
+                                provider = ImageProvider(txtBmp),
+                                contentDescription = "Styled Text",
+                                modifier = GlanceModifier.fillMaxSize()
+                            )
+                        }
+                    } else if (memoText.isNotEmpty()) {
+                        // fallback 일반 텍스트
                         Text(
                             text = memoText,
-                            style = TextStyle(
-                                fontSize = 13.sp,
-                                color = ColorProvider(textColor),
-                                fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
-                                fontStyle = if (isItalic) FontStyle.Italic else FontStyle.Normal
-                            ),
+                            style = TextStyle(fontSize = 13.sp, color = ColorProvider(textColor)),
                             maxLines = 8,
                             modifier = GlanceModifier.fillMaxSize()
                         )
                     }
 
+                    // 레이어 B: 다채색 드로잉 손글씨 오버레이
                     if (hasBitmapDrawing && drawingFile != null) {
-                        val bitmap = BitmapFactory.decodeFile(drawingFile.absolutePath)
-                        if (bitmap != null) {
+                        val drawBmp = BitmapFactory.decodeFile(drawingFile.absolutePath)
+                        if (drawBmp != null) {
                             Image(
-                                provider = ImageProvider(bitmap),
+                                provider = ImageProvider(drawBmp),
                                 contentDescription = "Drawing Overlay",
                                 modifier = GlanceModifier.fillMaxSize()
                             )
                         }
-                    } else if (memoText.isEmpty()) {
+                    } else if (memoText.isEmpty() && !hasTextBitmap) {
                         Text(
                             text = "터치하여 편집...",
                             style = TextStyle(fontSize = 12.sp, color = ColorProvider(Color.Gray))
