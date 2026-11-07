@@ -13,14 +13,13 @@ import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.Image
 import androidx.glance.ImageProvider
+import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
-import androidx.glance.appwidget.action.ActionCallback
-import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -38,6 +37,8 @@ class FoldstItWidget : GlanceAppWidget() {
         private val SQUARE_SIZE = DpSize(100.dp, 100.dp)
         private val WIDE_SIZE = DpSize(200.dp, 100.dp)
         private val LARGE_SIZE = DpSize(200.dp, 200.dp)
+
+        val memoIdKey = ActionParameters.Key<String>("EDIT_MEMO_ID")
 
         fun notifyUpdate(context: Context) {
             try {
@@ -71,7 +72,6 @@ class FoldstItWidget : GlanceAppWidget() {
             var memoText = ""
             var themeName = "PASTEL_YELLOW"
 
-            // 보드 전체 데이터에서 타겟 메모 추출
             val jsonStr = boardPrefs.getString("memo_list_json", null)
             if (!jsonStr.isNullOrEmpty() && targetMemoId.isNotEmpty()) {
                 try {
@@ -100,23 +100,22 @@ class FoldstItWidget : GlanceAppWidget() {
                 else -> Triple(Color(0xFFFFF9C4), Color(0xFF2C2C2C), Color(0xFF1E88E5))
             }
 
-            // 고화질 드로잉 비트맵 파일 체크
             val drawingFile = if (targetMemoId.isNotEmpty()) File(context.filesDir, "drawing_${targetMemoId}.png") else null
             val hasBitmapDrawing = drawingFile != null && drawingFile.exists()
 
-            // 딥링크 인텐트 생성 (탭 시 해당 메모 편집기 즉시 팝업)
-            val openIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("EDIT_MEMO_ID", targetMemoId)
+            // Glance 규격: actionStartActivity 제네릭 호출 (타입 매칭 오류 완전 해결)
+            val clickAction = if (targetMemoId.isNotEmpty()) {
+                actionStartActivity<MainActivity>(actionParametersOf(memoIdKey to targetMemoId))
+            } else {
+                actionStartActivity<MainActivity>()
             }
 
-            // 벽에 삐딱하게 붙인 듯한 스큐모피즘 포스트잇/연습장 레이아웃
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
                     .cornerRadius(10.dp)
                     .background(bgColor)
-                    .clickable(actionStartActivity(openIntent))
+                    .clickable(clickAction)
                     .padding(10.dp)
             ) {
                 Column(
@@ -124,7 +123,6 @@ class FoldstItWidget : GlanceAppWidget() {
                     verticalAlignment = Alignment.Top,
                     horizontalAlignment = Alignment.Start
                 ) {
-                    // 상단 압정 핀 및 헤더
                     Row(
                         modifier = GlanceModifier.fillMaxWidth().padding(bottom = 2.dp),
                         horizontalAlignment = Alignment.End,
@@ -144,7 +142,6 @@ class FoldstItWidget : GlanceAppWidget() {
                         )
                     }
 
-                    // 텍스트 본문
                     if (memoText.isNotEmpty()) {
                         Text(
                             text = memoText,
@@ -156,7 +153,6 @@ class FoldstItWidget : GlanceAppWidget() {
                         )
                     }
 
-                    // 손글씨 드로잉 실제 비트맵 렌더링
                     if (hasBitmapDrawing && drawingFile != null) {
                         val bitmap = BitmapFactory.decodeFile(drawingFile.absolutePath)
                         if (bitmap != null) {
