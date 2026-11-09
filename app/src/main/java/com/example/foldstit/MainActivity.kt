@@ -45,7 +45,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -142,10 +142,9 @@ object LocalFontLoader {
         }
     }
 
-    @Composable
     fun getFontFamily(context: Context, font: MemoFont): FontFamily {
         val tf = getTypeface(context, font)
-        return remember(font) { FontFamily(tf) }
+        return FontFamily(tf)
     }
 }
 
@@ -275,6 +274,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// Composable 규칙을 완벽히 준수하는 캐시 기반 텍스트 스타일 생성 함수
 @Composable
 fun rememberCachedStyledString(
     context: Context,
@@ -284,9 +284,23 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
+    // remember 계산식 바깥에서 안전하게 미리 폰트 패밀리들을 로드
     val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    val fontFamilies = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    val nanumFamily = LocalFontLoader.getFontFamily(context, MemoFont.NANUM_PEN)
+    val garamFamily = LocalFontLoader.getFontFamily(context, MemoFont.GARAM)
+    val galmaetFamily = LocalFontLoader.getFontFamily(context, MemoFont.GALMAET)
+    val godingFamily = LocalFontLoader.getFontFamily(context, MemoFont.GODING)
+    val gyuriFamily = LocalFontLoader.getFontFamily(context, MemoFont.GYURI)
+
+    val fontMap = remember(defaultFamily, nanumFamily, garamFamily, galmaetFamily, godingFamily, gyuriFamily) {
+        mapOf(
+            MemoFont.DEFAULT to FontFamily.Default,
+            MemoFont.NANUM_PEN to nanumFamily,
+            MemoFont.GARAM to garamFamily,
+            MemoFont.GALMAET to galmaetFamily,
+            MemoFont.GODING to godingFamily,
+            MemoFont.GYURI to gyuriFamily
+        )
     }
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
@@ -307,7 +321,7 @@ fun rememberCachedStyledString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFamily = fontFamilies[fontEnum] ?: defaultFamily
+                        val customFamily = fontMap[fontEnum] ?: defaultFamily
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
@@ -1548,7 +1562,7 @@ fun MemoEditorOverlay(
                             },
                             visualTransformation = {
                                 androidx.compose.ui.text.input.TransformedText(
-                                    buildOptimizedAnnotatedString(
+                                    rememberCachedStyledString(
                                         context = context,
                                         text = tfValue.text,
                                         spans = spanList,
