@@ -142,9 +142,10 @@ object LocalFontLoader {
         }
     }
 
+    @Composable
     fun getFontFamily(context: Context, font: MemoFont): FontFamily {
         val tf = getTypeface(context, font)
-        return FontFamily(tf)
+        return remember(font) { FontFamily(tf) }
     }
 }
 
@@ -275,7 +276,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun buildOptimizedAnnotatedString(
+fun rememberCachedStyledString(
     context: Context,
     text: String,
     spans: List<TextSpanItem>,
@@ -284,6 +285,10 @@ fun buildOptimizedAnnotatedString(
     defaultSize: Int
 ): AnnotatedString {
     val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
+    val fontFamilies = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    }
+
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
         buildAnnotatedString {
             append(text)
@@ -302,7 +307,7 @@ fun buildOptimizedAnnotatedString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFamily = LocalFontLoader.getFontFamily(context, fontEnum)
+                        val customFamily = fontFamilies[fontEnum] ?: defaultFamily
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
@@ -871,7 +876,7 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        val styledText = buildOptimizedAnnotatedString(
+                        val styledText = rememberCachedStyledString(
                             context = context,
                             text = memo.text,
                             spans = memo.spans,
