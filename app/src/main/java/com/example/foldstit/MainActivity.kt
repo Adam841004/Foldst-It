@@ -341,8 +341,8 @@ fun PegboardScreen(
                             postRotate(p.rotation, sw / 2f, sh / 2f)
                             postTranslate(p.normX * bmpWidth - sw / 2f, p.normY * bmpHeight - sh / 2f)
                         }
-                        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-                        canvas.drawBitmap(rawBmp, matrix, paint)
+                        val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                        canvas.drawBitmap(rawBmp, matrix, bitmapPaint)
                     }
                 }
             }
@@ -566,26 +566,26 @@ fun PegboardScreen(
                     renderCompositeBitmap(memo)
                     if (memo.strokes.isNotEmpty()) {
                         try {
-                            val bmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
-                            val canvas = android.graphics.Canvas(bmp)
-                            val paint = Paint().apply {
+                            val drawingBmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
+                            val drawingCanvas = android.graphics.Canvas(drawingBmp)
+                            val drawingPaint = Paint().apply {
                                 isAntiAlias = true
                                 style = Paint.Style.STROKE
                                 strokeCap = Paint.Cap.ROUND
                                 strokeJoin = Paint.Join.ROUND
                             }
                             memo.strokes.forEach { s ->
-                                paint.color = android.graphics.Color.parseColor(s.colorHex)
-                                paint.strokeWidth = s.width * 1.5f
+                                drawingPaint.color = android.graphics.Color.parseColor(s.colorHex)
+                                drawingPaint.strokeWidth = s.width * 1.5f
                                 if (s.points.size > 1) {
                                     val path = android.graphics.Path()
                                     path.moveTo(s.points[0].x * 500f, s.points[0].y * 500f)
                                     for (pt in s.points) { path.lineTo(pt.x * 500f, pt.y * 500f) }
-                                    canvas.drawPath(path, paint)
+                                    drawingCanvas.drawPath(path, drawingPaint)
                                 }
                             }
                             val outFile = File(context.filesDir, "drawing_${memo.id}.png")
-                            FileOutputStream(outFile).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+                            FileOutputStream(outFile).use { out -> drawingBmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
                         } catch (_: Exception) {}
                     } else {
                         val outFile = File(context.filesDir, "drawing_${memo.id}.png")
@@ -1048,7 +1048,7 @@ fun PegboardScreen(
                             val count = memoList.count { it.theme == theme }
                             FilterChip(
                                 selected = selectedFilterTheme == theme,
-                                onClick = { selectedFilterTheme = if (selectedFilterTheme == theme) null else theme },
+                                onClick = { selectedFilterTheme = if (selectedFilterTheme == theme) theme else null },
                                 label = { Text("${theme.title} ($count)", fontSize = 11.sp) },
                                 leadingIcon = {
                                     Box(
