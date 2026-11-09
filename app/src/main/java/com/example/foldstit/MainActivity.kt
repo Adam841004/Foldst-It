@@ -127,7 +127,6 @@ enum class MemoFont(val title: String, val fileName: String) {
 
 object LocalFontLoader {
     private val typefaceCache = mutableMapOf<String, Typeface>()
-    private val fontFamilyCache = mutableMapOf<String, FontFamily>()
 
     fun getTypeface(context: Context, font: MemoFont): Typeface {
         if (font.fileName.isEmpty()) return Typeface.DEFAULT
@@ -143,15 +142,9 @@ object LocalFontLoader {
         }
     }
 
-    // 컴포저블 컨텍스트 외부에서도 안전하게 호출 가능한 FontFamily 캐시 헬퍼
-    fun getCachedFontFamily(context: Context, font: MemoFont): FontFamily {
-        if (font.fileName.isEmpty()) return FontFamily.Default
-        if (fontFamilyCache.containsKey(font.name)) return fontFamilyCache[font.name]!!
-
+    fun getFontFamily(context: Context, font: MemoFont): FontFamily {
         val tf = getTypeface(context, font)
-        val family = FontFamily(tf)
-        fontFamilyCache[font.name] = family
-        return family
+        return FontFamily(tf)
     }
 }
 
@@ -281,9 +274,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 순수 캐시 기반 텍스트 스타일 생성 함수 (컴포저블 컨텍스트 제약 문제 완전 해결)
-@Composable
-fun rememberCachedStyledString(
+// 순수 AnnotatedString 생성 유틸 (컴포저블 컨텍스트 제약 문제 완전 제거)
+fun buildOptimizedAnnotatedString(
     context: Context,
     text: String,
     spans: List<TextSpanItem>,
@@ -291,48 +283,42 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getCachedFontFamily(context, defaultFont) }
-    val families = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getCachedFontFamily(context, it) }
-    }
-
-    return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
-        buildAnnotatedString {
-            append(text)
-            if (spans.isEmpty()) {
-                addStyle(
-                    SpanStyle(
-                        fontFamily = defaultFamily,
-                        color = defaultColor,
-                        fontSize = defaultSize.sp
-                    ),
-                    0, text.length
-                )
-            } else {
-                spans.forEach { sp ->
-                    val s = sp.start.coerceIn(0, text.length)
-                    val e = sp.end.coerceIn(0, text.length)
-                    if (s < e) {
-                        val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFamily = families[fontEnum] ?: defaultFamily
-                        val textDecor = TextDecoration.combine(
-                            listOfNotNull(
-                                if (sp.isUnderline) TextDecoration.Underline else null,
-                                if (sp.isStrikethrough) TextDecoration.LineThrough else null
-                            )
+    val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
+    return buildAnnotatedString {
+        append(text)
+        if (spans.isEmpty()) {
+            addStyle(
+                SpanStyle(
+                    fontFamily = defaultFamily,
+                    color = defaultColor,
+                    fontSize = defaultSize.sp
+                ),
+                0, text.length
+            )
+        } else {
+            spans.forEach { sp ->
+                val s = sp.start.coerceIn(0, text.length)
+                val e = sp.end.coerceIn(0, text.length)
+                if (s < e) {
+                    val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
+                    val customFamily = LocalFontLoader.getFontFamily(context, fontEnum)
+                    val textDecor = TextDecoration.combine(
+                        listOfNotNull(
+                            if (sp.isUnderline) TextDecoration.Underline else null,
+                            if (sp.isStrikethrough) TextDecoration.LineThrough else null
                         )
-                        addStyle(
-                            SpanStyle(
-                                fontFamily = customFamily,
-                                color = Color(android.graphics.Color.parseColor(sp.colorHex)),
-                                fontSize = sp.fontSize.sp,
-                                fontWeight = if (sp.isBold) FontWeight.ExtraBold else FontWeight.Normal,
-                                textGeometricTransform = if (sp.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
-                                textDecoration = textDecor
-                            ),
-                            s, e
-                        )
-                    }
+                    )
+                    addStyle(
+                        SpanStyle(
+                            fontFamily = customFamily,
+                            color = Color(android.graphics.Color.parseColor(sp.colorHex)),
+                            fontSize = sp.fontSize.sp,
+                            fontWeight = if (sp.isBold) FontWeight.ExtraBold else FontWeight.Normal,
+                            textGeometricTransform = if (sp.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
+                            textDecoration = textDecor
+                        ),
+                        s, e
+                    )
                 }
             }
         }
@@ -883,7 +869,7 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        val styledText = rememberCachedStyledString(
+                        val styledText = buildOptimizedAnnotatedString(
                             context = context,
                             text = memo.text,
                             spans = memo.spans,
@@ -1229,11 +1215,6 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
-    val defaultFamily = remember(context, activeFont) { LocalFontLoader.getCachedFontFamily(context, activeFont) }
-    val fontFamilies = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getCachedFontFamily(context, it) }
-    }
-
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -1499,7 +1480,7 @@ fun MemoEditorOverlay(
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(containerColor = if (activeFont == f) Color(0xFFE0E0E0) else Color.Transparent)
                                         ) {
-                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = fontFamilies[f])
+                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = LocalFontLoader.getFontFamily(context, f))
                                         }
                                     }
                                 }
@@ -1560,7 +1541,7 @@ fun MemoEditorOverlay(
                             },
                             visualTransformation = {
                                 androidx.compose.ui.text.input.TransformedText(
-                                    rememberCachedStyledString(
+                                    buildOptimizedAnnotatedString(
                                         context = context,
                                         text = tfValue.text,
                                         spans = spanList,
@@ -1588,7 +1569,7 @@ fun MemoEditorOverlay(
                                         style = TextStyle(
                                             color = currentTheme.textColor.copy(alpha = 0.4f),
                                             fontSize = activeFontSize.sp,
-                                            fontFamily = defaultFamily
+                                            fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
                                         )
                                     )
                                 }
