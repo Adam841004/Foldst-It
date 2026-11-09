@@ -1667,83 +1667,89 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 최적화된 사진 스티커 렌더링 및 편집 제스처 레이어 (핸들 포함)
-                        photoStickers.forEach { sticker ->
-                            val pFile = File(context.filesDir, sticker.fileName)
-                            if (pFile.exists()) {
-                                val b = BitmapFactory.decodeFile(pFile.absolutePath)
-                                if (b != null) {
-                                    val isSelected = selectedPhotoId == sticker.id
-                                    Box(
-                                        modifier = Modifier
-                                            .offset(x = sticker.offsetX.dp, y = sticker.offsetY.dp)
-                                            .graphicsLayer(
-                                                scaleX = sticker.scale,
-                                                scaleY = sticker.scale,
-                                                rotationZ = sticker.rotation
-                                            )
-                                            .pointerInput(sticker.id) {
-                                                detectTransformGestures { _, pan, zoom, rotation ->
-                                                    selectedPhotoId = sticker.id
-                                                    sticker.offsetX += pan.x
-                                                    sticker.offsetY += pan.y
-                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.2f, 4.0f)
-                                                    sticker.rotation = (sticker.rotation + rotation) % 360f
-                                                }
-                                            }
-                                            .border(
-                                                width = if (isSelected) 2.dp else 0.dp,
-                                                color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
-                                                shape = RoundedCornerShape(4.dp)
-                                            )
-                                            .zIndex(if (isSelected) 50f else 2f)
-                                    ) {
-                                        Image(
-                                            bitmap = b.asImageBitmap(),
-                                            contentDescription = "Photo Sticker",
+                        // 💡 [핵심 수정] 사진 스티커 레이어를 최상단(zIndex = 1000f)으로 고정하여 터치 씹힘 원천 차단
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(1000f)
+                        ) {
+                            photoStickers.forEach { sticker ->
+                                val pFile = File(context.filesDir, sticker.fileName)
+                                if (pFile.exists()) {
+                                    val b = BitmapFactory.decodeFile(pFile.absolutePath)
+                                    if (b != null) {
+                                        val isSelected = selectedPhotoId == sticker.id
+                                        Box(
                                             modifier = Modifier
-                                                .width(160.dp)
-                                                .wrapContentHeight()
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .clickable { selectedPhotoId = sticker.id }
-                                        )
-
-                                        if (isSelected) {
-                                            Box(
+                                                .offset(x = sticker.offsetX.dp, y = sticker.offsetY.dp)
+                                                .graphicsLayer(
+                                                    scaleX = sticker.scale,
+                                                    scaleY = sticker.scale,
+                                                    rotationZ = sticker.rotation
+                                                )
+                                                .pointerInput(sticker.id) {
+                                                    detectTransformGestures { _, pan, zoom, rotation ->
+                                                        selectedPhotoId = sticker.id
+                                                        sticker.offsetX += pan.x
+                                                        sticker.offsetY += pan.y
+                                                        sticker.scale = (sticker.scale * zoom).coerceIn(0.2f, 4.0f)
+                                                        sticker.rotation = (sticker.rotation + rotation) % 360f
+                                                    }
+                                                }
+                                                .border(
+                                                    width = if (isSelected) 2.dp else 0.dp,
+                                                    color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                )
+                                                .zIndex(if (isSelected) 2000f else 1000f)
+                                        ) {
+                                            Image(
+                                                bitmap = b.asImageBitmap(),
+                                                contentDescription = "Photo Sticker",
                                                 modifier = Modifier
-                                                    .align(Alignment.TopEnd)
-                                                    .offset(x = 10.dp, y = (-10).dp)
-                                                    .size(28.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Color.Red)
-                                                    .clickable { 
-                                                        photoStickers.remove(sticker)
-                                                        selectedPhotoId = null
-                                                    },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
-                                            }
+                                                    .width(160.dp)
+                                                    .wrapContentHeight()
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .clickable { selectedPhotoId = sticker.id }
+                                            )
 
-                                            Box(
-                                                modifier = Modifier
-                                                    .align(Alignment.BottomEnd)
-                                                    .offset(x = 10.dp, y = 10.dp)
-                                                    .size(30.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Color(0xFF1976D2))
-                                                    .pointerInput(sticker.id) {
-                                                        detectDragGestures { change, dragAmount ->
-                                                            change.consume()
-                                                            val angleDelta = atan2(dragAmount.y, dragAmount.x) * (180f / Math.PI.toFloat())
-                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.2f) % 360f
-                                                            val scaleDelta = (dragAmount.x + dragAmount.y) * 0.005f
-                                                            sticker.scale = (sticker.scale + scaleDelta).coerceIn(0.3f, 4.0f)
-                                                        }
-                                                    },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate/Scale", tint = Color.White, modifier = Modifier.size(18.dp))
+                                            if (isSelected) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.TopEnd)
+                                                        .offset(x = 10.dp, y = (-10).dp)
+                                                        .size(28.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color.Red)
+                                                        .clickable { 
+                                                            photoStickers.remove(sticker)
+                                                            selectedPhotoId = null
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
+                                                }
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.BottomEnd)
+                                                        .offset(x = 10.dp, y = 10.dp)
+                                                        .size(30.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFF1976D2))
+                                                        .pointerInput(sticker.id) {
+                                                            detectDragGestures { change, dragAmount ->
+                                                                change.consume()
+                                                                val angleDelta = atan2(dragAmount.y, dragAmount.x) * (180f / Math.PI.toFloat())
+                                                                sticker.rotation = (sticker.rotation + angleDelta * 0.2f) % 360f
+                                                                val scaleDelta = (dragAmount.x + dragAmount.y) * 0.005f
+                                                                sticker.scale = (sticker.scale + scaleDelta).coerceIn(0.3f, 4.0f)
+                                                            }
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.RotateRight, contentDescription = "Rotate/Scale", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                }
                                             }
                                         }
                                     }
@@ -1984,7 +1990,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                width = if (isSelected) 2.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
