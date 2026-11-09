@@ -100,7 +100,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.util.UUID
-import kotlin.math.atan2
 import kotlin.math.hypot
 
 enum class NoteTheme(
@@ -275,7 +274,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 텍스트 렌더링 최적화 캐시 유틸
+// 완전 무결한 컴파일 안전 스타일 생성 함수
 @Composable
 fun buildOptimizedAnnotatedString(
     context: Context,
@@ -285,11 +284,8 @@ fun buildOptimizedAnnotatedString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    val families = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
-    }
-
+    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
+    
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
         buildAnnotatedString {
             append(text)
@@ -308,7 +304,7 @@ fun buildOptimizedAnnotatedString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFamily = families[fontEnum] ?: defaultFamily
+                        val customFamily = LocalFontLoader.getFontFamily(context, fontEnum)
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
@@ -1223,10 +1219,7 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
-    val defaultFamily = remember(context, activeFont) { LocalFontLoader.getFontFamily(context, activeFont) }
-    val fontFamilies = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
-    }
+    val defaultFamily = LocalFontLoader.getFontFamily(context, activeFont)
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -1493,7 +1486,7 @@ fun MemoEditorOverlay(
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(containerColor = if (activeFont == f) Color(0xFFE0E0E0) else Color.Transparent)
                                         ) {
-                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = fontFamilies[f])
+                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = LocalFontLoader.getFontFamily(context, f))
                                         }
                                     }
                                 }
@@ -1590,7 +1583,6 @@ fun MemoEditorOverlay(
                             }
                         )
 
-                        // 💡 [삼성노트 스타일 완벽 구현] 사진 스티커 (드래그 이동, 확대/축소, 회전, 삭제 핸들)
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1606,7 +1598,6 @@ fun MemoEditorOverlay(
                                                 rotationZ = sticker.rotation,
                                                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                                             )
-                                            // 사진 본체 드래그 이동 (드래그 앤 드롭)
                                             .pointerInput(sticker.id) {
                                                 detectDragGestures { change, dragAmount ->
                                                     change.consume()
@@ -1633,7 +1624,6 @@ fun MemoEditorOverlay(
                                         )
 
                                         if (isSelected) {
-                                            // 삭제 핸들 (우측 상단)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
@@ -1650,7 +1640,6 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
                                             }
 
-                                            // 회전 및 크기 조절 핸들 (우측 하단) - 중심점 휨 방지 회전 연산
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
@@ -1669,7 +1658,7 @@ fun MemoEditorOverlay(
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate/Scale", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(18.dp))
                                             }
                                         }
                                     }
