@@ -167,8 +167,8 @@ data class NormStroke(val points: List<NormPoint>, val colorHex: String = "#2121
 data class PhotoStickerItem(
     val id: String = UUID.randomUUID().toString(),
     val fileName: String,
-    var normX: Float = 0.5f,
-    var normY: Float = 0.5f,
+    var offsetX: Float = 50f,
+    var offsetY: Float = 50f,
     var scale: Float = 1.0f,
     var rotation: Float = 0.0f
 )
@@ -339,7 +339,7 @@ fun PegboardScreen(
                         val matrix = Matrix().apply {
                             postScale(sw / rawBmp.width, sh / rawBmp.height)
                             postRotate(p.rotation, sw / 2f, sh / 2f)
-                            postTranslate(p.normX * bmpWidth - sw / 2f, p.normY * bmpHeight - sh / 2f)
+                            postTranslate(p.offsetX, p.offsetY)
                         }
                         val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
                         canvas.drawBitmap(rawBmp, matrix, bitmapPaint)
@@ -467,8 +467,8 @@ fun PegboardScreen(
                             PhotoStickerItem(
                                 id = pObj.optString("id", UUID.randomUUID().toString()),
                                 fileName = pObj.getString("fileName"),
-                                normX = pObj.optDouble("normX", 0.5).toFloat(),
-                                normY = pObj.optDouble("normY", 0.5).toFloat(),
+                                offsetX = pObj.optDouble("offsetX", 50.0).toFloat(),
+                                offsetY = pObj.optDouble("offsetY", 50.0).toFloat(),
                                 scale = pObj.optDouble("scale", 1.0).toFloat(),
                                 rotation = pObj.optDouble("rotation", 0.0).toFloat()
                             )
@@ -537,8 +537,8 @@ fun PegboardScreen(
                     pArr.put(JSONObject().apply {
                         put("id", p.id)
                         put("fileName", p.fileName)
-                        put("normX", p.normX)
-                        put("normY", p.normY)
+                        put("offsetX", p.offsetX)
+                        put("offsetY", p.offsetY)
                         put("scale", p.scale)
                         put("rotation", p.rotation)
                     })
@@ -787,10 +787,7 @@ fun PegboardScreen(
                                         contentDescription = null,
                                         modifier = Modifier
                                             .size((50 * p.scale).dp)
-                                            .offset(
-                                                x = (p.normX * 120).dp,
-                                                y = (p.normY * 120).dp
-                                            )
+                                            .offset(x = p.offsetX.dp, y = p.offsetY.dp)
                                             .rotate(p.rotation)
                                             .alpha(0.9f)
                                     )
@@ -1173,9 +1170,6 @@ fun MemoEditorOverlay(
     val undoStack = remember { mutableStateListOf<NormStroke>() }
     var currentStrokePoints by remember { mutableStateOf(listOf<NormPoint>()) }
 
-    var canvasWidth by remember { mutableStateOf(1f) }
-    var canvasHeight by remember { mutableStateOf(1f) }
-
     val focusRequester = remember { FocusRequester() }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -1188,8 +1182,8 @@ fun MemoEditorOverlay(
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(outFile).use { output -> input.copyTo(output) }
                 }
-                photoStickers.add(PhotoStickerItem(fileName = fileName))
-                Toast.makeText(context, "사진이 추가되었습니다. 두 손가락으로 크기와 회전을 조절하세요.", Toast.LENGTH_SHORT).show()
+                photoStickers.add(PhotoStickerItem(fileName = fileName, offsetX = 40f, offsetY = 60f))
+                Toast.makeText(context, "사진이 추가되었습니다. 드래그하여 이동하고 두 손가락으로 크기를 조절하세요.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "사진 불러오기 실패", Toast.LENGTH_SHORT).show()
             }
@@ -1245,7 +1239,7 @@ fun MemoEditorOverlay(
             ),
         contentAlignment = Alignment.Center
     ) {
-        // [핵심 개선] imePadding을 제거하여 키보드나 설정창이 올라와도 노트패드 카드가 줄어들지 않고 고정됨
+        // [사진 2~4 반영] imePadding 제거로 키보드/설정창 오픈 시 노트패드 카드 크기가 줄어들지 않고 완벽히 고정됨
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = currentTheme.bgColor),
@@ -1476,7 +1470,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // [핵심 개선] 사진 레이아웃 그대로(사각형 테두리 박스 없이) 자유로운 크기/위치/회전 조작형 스티커 렌더링
+                        // [사진 1 반영] 사진 본래의 레이아웃 유지 (네모 회색 박스 제거) + 자유 드래그 이동, 핀치 줌, 회전 조작
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1485,10 +1479,7 @@ fun MemoEditorOverlay(
                                     val isSelected = selectedPhotoId == sticker.id
                                     Box(
                                         modifier = Modifier
-                                            .offset(
-                                                x = (sticker.normX * 280).dp,
-                                                y = (sticker.normY * 360).dp
-                                            )
+                                            .offset(x = sticker.offsetX.dp, y = sticker.offsetY.dp)
                                             .graphicsLayer(
                                                 scaleX = sticker.scale,
                                                 scaleY = sticker.scale,
@@ -1497,61 +1488,61 @@ fun MemoEditorOverlay(
                                             .pointerInput(sticker.id) {
                                                 detectTransformGestures { _, pan, zoom, rotation ->
                                                     selectedPhotoId = sticker.id
-                                                    sticker.normX = (sticker.normX + pan.x / 1000f).coerceIn(0.02f, 0.98f)
-                                                    sticker.normY = (sticker.normY + pan.y / 1400f).coerceIn(0.02f, 0.98f)
-                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.3f, 4.0f)
+                                                    sticker.offsetX += pan.x
+                                                    sticker.offsetY += pan.y
+                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.2f, 5.0f)
                                                     sticker.rotation = (sticker.rotation + rotation) % 360f
                                                 }
                                             }
                                             .border(
-                                                width = if (isSelected) 1.5.dp else 0.dp,
+                                                width = if (isSelected) 2.dp else 0.dp,
                                                 color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
                                                 shape = RoundedCornerShape(4.dp)
                                             )
-                                            .zIndex(if (isSelected) 5f else 1.5f)
+                                            .zIndex(if (isSelected) 10f else 2f)
                                     ) {
                                         Image(
                                             bitmap = b.asImageBitmap(),
                                             contentDescription = "Photo Sticker",
                                             modifier = Modifier
-                                                .width(160.dp)
+                                                .width(140.dp)
                                                 .wrapContentHeight()
                                                 .clip(RoundedCornerShape(4.dp))
                                         )
 
                                         if (isSelected) {
-                                            // 삭제 버튼 (상단 우측)
+                                            // 삭제 핸들
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
-                                                    .offset(x = 6.dp, y = (-6).dp)
-                                                    .size(24.dp)
+                                                    .offset(x = 8.dp, y = (-8).dp)
+                                                    .size(26.dp)
                                                     .clip(CircleShape)
                                                     .background(Color.Red)
                                                     .clickable { photoStickers.remove(sticker) },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(14.dp))
+                                                Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
                                             }
 
-                                            // 회전 핸들 (하단 우측)
+                                            // 회전 핸들
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
-                                                    .offset(x = 6.dp, y = 6.dp)
-                                                    .size(26.dp)
+                                                    .offset(x = 8.dp, y = 8.dp)
+                                                    .size(28.dp)
                                                     .clip(CircleShape)
                                                     .background(Color(0xFF1976D2))
                                                     .pointerInput(sticker.id) {
                                                         detectDragGestures { change, dragAmount ->
                                                             change.consume()
                                                             val angleDelta = atan2(dragAmount.y, dragAmount.x) * (180f / Math.PI.toFloat())
-                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.12f) % 360f
+                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.15f) % 360f
                                                         }
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(16.dp))
+                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(18.dp))
                                             }
                                         }
                                     }
@@ -1711,6 +1702,7 @@ fun MemoEditorOverlay(
                                 onSave(memo)
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+.copy()
                         ) {
                             Text("완료 및 저장", color = Color.White)
                         }
