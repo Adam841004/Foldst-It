@@ -45,7 +45,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -274,9 +274,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Composable 규칙을 완벽히 준수하는 캐시 기반 텍스트 스타일 생성 함수
+// Composable 제약을 완벽히 준수하는 텍스트 캐시 최적화 함수
 @Composable
-fun rememberCachedStyledString(
+fun buildOptimizedAnnotatedString(
     context: Context,
     text: String,
     spans: List<TextSpanItem>,
@@ -284,23 +284,10 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    // remember 계산식 바깥에서 안전하게 미리 폰트 패밀리들을 로드
+    // remember 블록 바깥에서 컴포저블 폰트들을 미리 안전하게 로드
     val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    val nanumFamily = LocalFontLoader.getFontFamily(context, MemoFont.NANUM_PEN)
-    val garamFamily = LocalFontLoader.getFontFamily(context, MemoFont.GARAM)
-    val galmaetFamily = LocalFontLoader.getFontFamily(context, MemoFont.GALMAET)
-    val godingFamily = LocalFontLoader.getFontFamily(context, MemoFont.GODING)
-    val gyuriFamily = LocalFontLoader.getFontFamily(context, MemoFont.GYURI)
-
-    val fontMap = remember(defaultFamily, nanumFamily, garamFamily, galmaetFamily, godingFamily, gyuriFamily) {
-        mapOf(
-            MemoFont.DEFAULT to FontFamily.Default,
-            MemoFont.NANUM_PEN to nanumFamily,
-            MemoFont.GARAM to garamFamily,
-            MemoFont.GALMAET to galmaetFamily,
-            MemoFont.GODING to godingFamily,
-            MemoFont.GYURI to gyuriFamily
-        )
+    val fontMap = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
     }
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
@@ -1856,7 +1843,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                width = if (selectedPhotoId == null && isSelected) 2.5.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
