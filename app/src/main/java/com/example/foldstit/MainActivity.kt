@@ -127,6 +127,7 @@ enum class MemoFont(val title: String, val fileName: String) {
 
 object LocalFontLoader {
     private val typefaceCache = mutableMapOf<String, Typeface>()
+    private val fontFamilyCache = mutableMapOf<String, FontFamily>()
 
     fun getTypeface(context: Context, font: MemoFont): Typeface {
         if (font.fileName.isEmpty()) return Typeface.DEFAULT
@@ -142,9 +143,15 @@ object LocalFontLoader {
         }
     }
 
+    // 일반 함수로 변경하여 컴포저블 제약 에러 원천 차단 및 자체 캐싱 적용
     fun getFontFamily(context: Context, font: MemoFont): FontFamily {
+        if (font.fileName.isEmpty()) return FontFamily.Default
+        if (fontFamilyCache.containsKey(font.name)) return fontFamilyCache[font.name]!!
+
         val tf = getTypeface(context, font)
-        return FontFamily(tf)
+        val family = FontFamily(tf)
+        fontFamilyCache[font.name] = family
+        return family
     }
 }
 
@@ -274,9 +281,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Composable 제약을 완벽히 준수하는 안전한 캐시 텍스트 스타일 생성 함수
+// 텍스트 캐시 최적화 함수
 @Composable
-fun buildStyledAnnotatedString(
+fun rememberCachedStyledString(
     context: Context,
     text: String,
     spans: List<TextSpanItem>,
@@ -284,22 +291,9 @@ fun buildStyledAnnotatedString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
-    val nanumFamily = remember(context) { LocalFontLoader.getFontFamily(context, MemoFont.NANUM_PEN) }
-    val garamFamily = remember(context) { LocalFontLoader.getFontFamily(context, MemoFont.GARAM) }
-    val galmaetFamily = remember(context) { LocalFontLoader.getFontFamily(context, MemoFont.GALMAET) }
-    val godingFamily = remember(context) { LocalFontLoader.getFontFamily(context, MemoFont.GODING) }
-    val gyuriFamily = remember(context) { LocalFontLoader.getFontFamily(context, MemoFont.GYURI) }
-
-    val fontMap = remember(defaultFamily, nanumFamily, garamFamily, galmaetFamily, godingFamily, gyuriFamily) {
-        mapOf(
-            MemoFont.DEFAULT to FontFamily.Default,
-            MemoFont.NANUM_PEN to nanumFamily,
-            MemoFont.GARAM to garamFamily,
-            MemoFont.GALMAET to galmaetFamily,
-            MemoFont.GODING to godingFamily,
-            MemoFont.GYURI to gyuriFamily
-        )
+    val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
+    val fontMap = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
     }
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
@@ -889,7 +883,7 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        val styledText = buildStyledAnnotatedString(
+                        val styledText = rememberCachedStyledString(
                             context = context,
                             text = memo.text,
                             spans = memo.spans,
@@ -1535,8 +1529,6 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        val editorFontFamily = LocalFontLoader.getFontFamily(context, activeFont)
-
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1591,7 +1583,7 @@ fun MemoEditorOverlay(
                                         style = TextStyle(
                                             color = currentTheme.textColor.copy(alpha = 0.4f),
                                             fontSize = activeFontSize.sp,
-                                            fontFamily = editorFontFamily
+                                            fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
                                         )
                                     )
                                 }
@@ -1765,4 +1757,120 @@ fun MemoEditorOverlay(
                         Button(
                             onClick = {
                                 memo.text = tfValue.text
-                                memo.
+                                memo.theme = currentTheme
+                                memo.font = activeFont
+                                memo.penWidth = selectedPenWidth
+                                memo.fontSize = activeFontSize
+                                memo.isBold = activeBold
+                                memo.isItalic = activeItalic
+                                memo.isUnderline = activeUnderline
+                                memo.isStrikethrough = activeStrikethrough
+                                memo.spans.clear()
+                                memo.spans.addAll(spanList)
+                                memo.strokes.clear()
+                                memo.strokes.addAll(strokes)
+                                memo.photos.clear()
+                                memo.photos.addAll(photoStickers)
+                                onSave(memo)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                        ) {
+                            Text("완료 및 저장", color = Color.White)
+                        }
+                    }
+                }
+
+                if (isPenMode && !isEraserMode && showDrawingPalette) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF232528)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 60.dp, start = 8.dp, end = 8.dp)
+                            .fillMaxWidth()
+                            .zIndex(10f)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("드로잉 펜 도구", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Box(
+                                        modifier = Modifier
+                                            .width(44.dp)
+                                            .height((selectedPenWidth / 2f).coerceIn(2f, 10f).dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(android.graphics.Color.parseColor(selectedDrawColorHex)))
+                                    )
+                                }
+                                IconButton(onClick = { showDrawingPalette = false }, modifier = Modifier.size(24.dp)) {
+                                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.LightGray)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("굵기", color = Color.Gray, fontSize = 11.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    listOf(2.5f to "초미세", 5f to "보통", 10f to "굵게", 18f to "형광펜").forEach { (w, label) ->
+                                        OutlinedButton(
+                                            onClick = { selectedPenWidth = w },
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = if (selectedPenWidth == w) Color(0xFF37474F) else Color.Transparent
+                                            ),
+                                            border = ButtonDefaults.outlinedButtonBorder.copy(
+                                                width = if (selectedPenWidth == w) 1.5.dp else 0.5.dp
+                                            )
+                                        ) {
+                                            Text(label, color = if (selectedPenWidth == w) Color(0xFF64B5F6) else Color.LightGray, fontSize = 10.sp)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                colorPalette.forEach { hex ->
+                                    val isSelected = selectedDrawColorHex.equals(hex, ignoreCase = true)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(android.graphics.Color.parseColor(hex)))
+                                            .border(
+                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
+                                                shape = CircleShape
+                                            )
+                                            .clickable { selectedDrawColorHex = hex },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isSelected) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = if (hex == "#FFFFFF" || hex == "#FFEB3B") Color.Black else Color.White,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
