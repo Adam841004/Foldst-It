@@ -792,8 +792,7 @@ fun PegboardScreen(
                                                 y = (p.normY * 120).dp
                                             )
                                             .rotate(p.rotation)
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .alpha(0.85f)
+                                            .alpha(0.9f)
                                     )
                                 }
                             }
@@ -1246,6 +1245,7 @@ fun MemoEditorOverlay(
             ),
         contentAlignment = Alignment.Center
     ) {
+        // [핵심 개선] imePadding을 제거하여 키보드나 설정창이 올라와도 노트패드 카드가 줄어들지 않고 고정됨
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = currentTheme.bgColor),
@@ -1253,7 +1253,6 @@ fun MemoEditorOverlay(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .imePadding()
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(
@@ -1477,6 +1476,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
+                        // [핵심 개선] 사진 레이아웃 그대로(사각형 테두리 박스 없이) 자유로운 크기/위치/회전 조작형 스티커 렌더링
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1486,8 +1486,8 @@ fun MemoEditorOverlay(
                                     Box(
                                         modifier = Modifier
                                             .offset(
-                                                x = (sticker.normX * 260).dp,
-                                                y = (sticker.normY * 340).dp
+                                                x = (sticker.normX * 280).dp,
+                                                y = (sticker.normY * 360).dp
                                             )
                                             .graphicsLayer(
                                                 scaleX = sticker.scale,
@@ -1497,34 +1497,35 @@ fun MemoEditorOverlay(
                                             .pointerInput(sticker.id) {
                                                 detectTransformGestures { _, pan, zoom, rotation ->
                                                     selectedPhotoId = sticker.id
-                                                    sticker.normX = (sticker.normX + pan.x / 1000f).coerceIn(0.05f, 0.95f)
-                                                    sticker.normY = (sticker.normY + pan.y / 1400f).coerceIn(0.05f, 0.95f)
-                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.5f, 3.0f)
+                                                    sticker.normX = (sticker.normX + pan.x / 1000f).coerceIn(0.02f, 0.98f)
+                                                    sticker.normY = (sticker.normY + pan.y / 1400f).coerceIn(0.02f, 0.98f)
+                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.3f, 4.0f)
                                                     sticker.rotation = (sticker.rotation + rotation) % 360f
                                                 }
                                             }
                                             .border(
                                                 width = if (isSelected) 1.5.dp else 0.dp,
                                                 color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(4.dp)
                                             )
-                                            .padding(4.dp)
                                             .zIndex(if (isSelected) 5f else 1.5f)
                                     ) {
                                         Image(
                                             bitmap = b.asImageBitmap(),
                                             contentDescription = "Photo Sticker",
                                             modifier = Modifier
-                                                .size(130.dp)
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .shadow(4.dp, RoundedCornerShape(6.dp))
+                                                .width(160.dp)
+                                                .wrapContentHeight()
+                                                .clip(RoundedCornerShape(4.dp))
                                         )
 
                                         if (isSelected) {
+                                            // 삭제 버튼 (상단 우측)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
-                                                    .size(22.dp)
+                                                    .offset(x = 6.dp, y = (-6).dp)
+                                                    .size(24.dp)
                                                     .clip(CircleShape)
                                                     .background(Color.Red)
                                                     .clickable { photoStickers.remove(sticker) },
@@ -1533,17 +1534,19 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(14.dp))
                                             }
 
+                                            // 회전 핸들 (하단 우측)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
-                                                    .size(24.dp)
+                                                    .offset(x = 6.dp, y = 6.dp)
+                                                    .size(26.dp)
                                                     .clip(CircleShape)
                                                     .background(Color(0xFF1976D2))
                                                     .pointerInput(sticker.id) {
                                                         detectDragGestures { change, dragAmount ->
                                                             change.consume()
                                                             val angleDelta = atan2(dragAmount.y, dragAmount.x) * (180f / Math.PI.toFloat())
-                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.1f) % 360f
+                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.12f) % 360f
                                                         }
                                                     },
                                                 contentAlignment = Alignment.Center
