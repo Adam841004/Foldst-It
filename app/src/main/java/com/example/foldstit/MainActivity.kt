@@ -1298,7 +1298,6 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
-    // 다운샘플링이 적용된 사진 첨부 런처 (렉/버벅임 원천 방지)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
