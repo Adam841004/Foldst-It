@@ -1183,7 +1183,7 @@ fun MemoEditorOverlay(
                     FileOutputStream(outFile).use { output -> input.copyTo(output) }
                 }
                 photoStickers.add(PhotoStickerItem(fileName = fileName, offsetX = 40f, offsetY = 60f))
-                Toast.makeText(context, "사진이 추가되었습니다. 드래그하여 이동하고 두 손가락으로 크기를 조절하세요.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "사진이 추가되었습니다. 터치하여 위치를 이동하거나 크기를 조절하세요.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "사진 불러오기 실패", Toast.LENGTH_SHORT).show()
             }
@@ -1239,7 +1239,6 @@ fun MemoEditorOverlay(
             ),
         contentAlignment = Alignment.Center
     ) {
-        // [사진 2~4 반영] imePadding 제거로 키보드/설정창 오픈 시 노트패드 카드 크기가 줄어들지 않고 완벽히 고정됨
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = currentTheme.bgColor),
@@ -1470,7 +1469,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // [사진 1 반영] 사진 본래의 레이아웃 유지 (네모 회색 박스 제거) + 자유 드래그 이동, 핀치 줌, 회전 조작
+                        // [핵심 해결] 사진 스티커에 전용 제스처 수신 영역을 부여하여 이동/크기조절/회전이 즉시 반영되도록 구현
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1508,10 +1507,10 @@ fun MemoEditorOverlay(
                                                 .width(140.dp)
                                                 .wrapContentHeight()
                                                 .clip(RoundedCornerShape(4.dp))
+                                                .clickable { selectedPhotoId = sticker.id }
                                         )
 
                                         if (isSelected) {
-                                            // 삭제 핸들
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
@@ -1525,7 +1524,6 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
                                             }
 
-                                            // 회전 핸들
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
@@ -1702,7 +1700,6 @@ fun MemoEditorOverlay(
                                 onSave(memo)
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
-.copy()
                         ) {
                             Text("완료 및 저장", color = Color.White)
                         }
