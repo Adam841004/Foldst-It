@@ -578,7 +578,6 @@ fun PegboardScreen(
                                 paint.color = android.graphics.Color.parseColor(s.colorHex)
                                 paint.strokeWidth = s.width * 1.5f
                                 if (s.points.size > 1) {
-                                    // 안드로이드 네이티브 Path 명시적 호출로 컴파일 에러 원천 차단
                                     val path = android.graphics.Path()
                                     path.moveTo(s.points[0].x * 500f, s.points[0].y * 500f)
                                     for (pt in s.points) { path.lineTo(pt.x * 500f, pt.y * 500f) }
@@ -1478,7 +1477,6 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 사진 스티커 레이어 (드래그, 핀치 줌, 회전 핸들 완벽 지원)
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1558,7 +1556,6 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 텍스트 필드 레이어
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1614,7 +1611,6 @@ fun MemoEditorOverlay(
                             }
                         )
 
-                        // 드로잉 / 지우개 캔버스 레이어
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1774,7 +1770,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (selectedPress = isSelected) 2.5.dp else 1.dp,
+                                                width = if (isSelected) 2.5.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
