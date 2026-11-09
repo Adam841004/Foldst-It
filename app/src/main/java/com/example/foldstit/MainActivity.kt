@@ -127,7 +127,6 @@ enum class MemoFont(val title: String, val fileName: String) {
 
 object LocalFontLoader {
     private val typefaceCache = mutableMapOf<String, Typeface>()
-    private val fontFamilyCache = mutableMapOf<String, FontFamily>()
 
     fun getTypeface(context: Context, font: MemoFont): Typeface {
         if (font.fileName.isEmpty()) return Typeface.DEFAULT
@@ -144,13 +143,8 @@ object LocalFontLoader {
     }
 
     fun getFontFamily(context: Context, font: MemoFont): FontFamily {
-        if (font.fileName.isEmpty()) return FontFamily.Default
-        if (fontFamilyCache.containsKey(font.name)) return fontFamilyCache[font.name]!!
-
         val tf = getTypeface(context, font)
-        val family = FontFamily(tf)
-        fontFamilyCache[font.name] = family
-        return family
+        return FontFamily(tf)
     }
 }
 
@@ -280,20 +274,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// 컴포저블 컨텍스트 내부에서 폰트 패밀리 맵을 미리 받아 인자로 전달하도록 수정 (컴파일 에러 원천 차단)
 @Composable
 fun rememberCachedStyledString(
-    context: Context,
     text: String,
     spans: List<TextSpanItem>,
     defaultFont: MemoFont,
     defaultColor: Color,
-    defaultSize: Int
+    defaultSize: Int,
+    fontFamilyMap: Map<MemoFont, FontFamily>
 ): AnnotatedString {
-    // 폰트 패밀리들을 미리 한 번에 로드하여 컴파일 에러 및 불필요한 반복 연산 방지
-    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
-    val fontFamilies = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
-    }
+    val defaultFamily = fontFamilyMap[defaultFont] ?: FontFamily.Default
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
         buildAnnotatedString {
@@ -313,7 +304,7 @@ fun rememberCachedStyledString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFamily = fontFamilies[fontEnum] ?: defaultFamily
+                        val customFamily = fontFamilyMap[fontEnum] ?: defaultFamily
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
@@ -882,13 +873,15 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
+                        val defaultFamily = LocalFontLoader.getFontFamily(context, memo.font)
+                        val fontFamilies = MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
                         val styledText = rememberCachedStyledString(
-                            context = context,
                             text = memo.text,
                             spans = memo.spans,
                             defaultFont = memo.font,
                             defaultColor = memo.theme.textColor,
-                            defaultSize = memo.fontSize
+                            defaultSize = memo.fontSize,
+                            fontFamilyMap = fontFamilies
                         )
                         Text(text = styledText, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
@@ -1228,6 +1221,12 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
+    // Composable 범위 내에서 폰트 패밀리 캐시 사전 생성
+    val defaultFamily = LocalFontLoader.getFontFamily(context, activeFont)
+    val fontFamilies = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -1493,7 +1492,7 @@ fun MemoEditorOverlay(
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(containerColor = if (activeFont == f) Color(0xFFE0E0E0) else Color.Transparent)
                                         ) {
-                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = LocalFontLoader.getFontFamily(context, f))
+                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = fontFamilies[f])
                                         }
                                     }
                                 }
@@ -1554,7 +1553,14 @@ fun MemoEditorOverlay(
                             },
                             visualTransformation = {
                                 androidx.compose.ui.text.input.TransformedText(
-                                    rememberCachedStyledString(context, tfValue.text, spanList, activeFont, currentTheme.textColor, activeFontSize),
+                                    rememberCachedStyledString(
+                                        text = tfValue.text,
+                                        spans = spanList,
+                                        defaultFont = activeFont,
+                                        defaultColor = currentTheme.textColor,
+                                        defaultSize = activeFontSize,
+                                        fontFamilyMap = fontFamilies
+                                    ),
                                     androidx.compose.ui.text.input.OffsetMapping.Identity
                                 )
                             },
@@ -1575,7 +1581,7 @@ fun MemoEditorOverlay(
                                         style = TextStyle(
                                             color = currentTheme.textColor.copy(alpha = 0.4f),
                                             fontSize = activeFontSize.sp,
-                                            fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
+                                            fontFamily = defaultFamily
                                         )
                                     )
                                 }
