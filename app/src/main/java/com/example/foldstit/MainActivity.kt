@@ -1,7 +1,6 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.example.foldstit
 
-import android.app.Activity
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
@@ -23,8 +22,10 @@ import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.UnderlineSpan
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,7 +65,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
@@ -78,9 +81,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextGeometricTransform
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
+import androidx.core.view.WindowCompat
 import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -178,6 +180,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 상단 상태바 완전 투명화 및 Edge-to-Edge 설정 (3번 사진 상단바 이질감 해결)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+
         initialEditMemoId = intent?.getStringExtra("EDIT_MEMO_ID")
 
         setContent {
@@ -263,7 +271,6 @@ fun buildStyledAnnotatedString(context: Context, text: String, spans: List<TextS
     }
 }
 
-// 획(Stroke)과 지우개 터치 좌표 사이의 최소 거리 계산 함수
 fun isStrokeHit(stroke: NormStroke, touchX: Float, touchY: Float, threshold: Float = 0.05f): Boolean {
     for (pt in stroke.points) {
         val dist = hypot((pt.x - touchX).toDouble(), (pt.y - touchY).toDouble()).toFloat()
@@ -284,10 +291,10 @@ fun PegboardScreen(
     var editingMemo by remember { mutableStateOf<MemoItem?>(null) }
     var isDockExpanded by remember { mutableStateOf(true) }
 
-    // 검색 및 테마 필터 상태
+    // 하단 툴바를 통해 활성화되는 검색 & 필터 모달 상태 (3번 요청 반영)
+    var isFilterSheetVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilterTheme by remember { mutableStateOf<NoteTheme?>(null) }
-    var isSearchVisible by remember { mutableStateOf(false) }
 
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedMemoIds = remember { mutableStateListOf<String>() }
@@ -467,7 +474,7 @@ fun PegboardScreen(
                         stroke.points.forEach { pt ->
                             pArr.put(JSONObject().apply {
                                 put("x", pt.x)
-                                put("y", pt.y)
+                                pt.y.toDouble().let { put("y", it) }
                             })
                         }
                         put("points", pArr)
@@ -532,7 +539,6 @@ fun PegboardScreen(
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // 안드로이드 표준 SAF 파일 내보내기/가져오기 런처
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? ->
@@ -596,7 +602,6 @@ fun PegboardScreen(
         }
     }
 
-    // 검색어 및 테마 필터링 적용된 메모 리스트
     val filteredMemoList = remember(memoList.toList(), searchQuery, selectedFilterTheme) {
         memoList.filter { memo ->
             val matchTheme = selectedFilterTheme == null || memo.theme == selectedFilterTheme
@@ -623,223 +628,149 @@ fun PegboardScreen(
             }
         }
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            // 상단 검색 & 테마 필터 바
-            Card(
-                shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.94f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Foldst-It 타공판", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = Color(0xFF263238))
-                        IconButton(onClick = { isSearchVisible = !isSearchVisible }, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                imageVector = if (isSearchVisible) Icons.Default.Close else Icons.Default.Search,
-                                contentDescription = "Search",
-                                tint = Color.DarkGray
-                            )
-                        }
-                    }
+        // 본문 타공판 그리드 (상단 투명 상태바 패딩 적용으로 이질감 완벽 해소)
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 160.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp, 
+                end = 16.dp, 
+                top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 16.dp, 
+                bottom = 100.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(filteredMemoList, key = { it.id }) { memo ->
+                val isSelected = selectedMemoIds.contains(memo.id)
+                val isThisFluttering = flutteringMemoId == memo.id
+                val flutterOffset = if (isThisFluttering) flutterAnim.value else 0f
 
-                    AnimatedVisibility(visible = isSearchVisible) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            placeholder = { Text("메모 내용 검색...", fontSize = 12.sp) },
-                            singleLine = true,
-                            trailingIcon = {
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(18.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .rotate(memo.rotationAngle + flutterOffset)
+                        .scale(if (isThisFluttering) 1.05f else 1f)
+                        .shadow(
+                            elevation = if (isThisFluttering) 18.dp else (if (isSelected) 14.dp else 8.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            spotColor = Color.Black.copy(alpha = 0.32f),
+                            ambientColor = Color.Black.copy(alpha = 0.18f)
+                        )
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(memo.theme.bgColor)
+                        .border(
+                            width = if (isSelected) 3.dp else 0.dp,
+                            color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .pointerInput(isSelectionMode) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (isSelectionMode) {
+                                        if (isSelected) selectedMemoIds.remove(memo.id) else selectedMemoIds.add(memo.id)
+                                        if (selectedMemoIds.isEmpty()) isSelectionMode = false
+                                    } else {
+                                        scope.launch {
+                                            flutteringMemoId = memo.id
+                                            flutterAnim.animateTo(
+                                                targetValue = 1f,
+                                                animationSpec = keyframes {
+                                                    durationMillis = 320
+                                                    0f at 0
+                                                    -5f at 90
+                                                    4f at 190
+                                                    0f at 320
+                                                }
+                                            )
+                                            editingMemo = memo
+                                            flutteringMemoId = null
+                                            flutterAnim.snapTo(0f)
+                                        }
+                                    }
+                                },
+                                onLongPress = {
+                                    if (!isSelectionMode) {
+                                        isSelectionMode = true
+                                        selectedMemoIds.add(memo.id)
                                     }
                                 }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp),
-                            shape = RoundedCornerShape(24.dp)
-                        )
-                    }
-
-                    // 컬러 테마별 필터 칩 목록
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                    ) {
-                        item {
-                            FilterChip(
-                                selected = selectedFilterTheme == null,
-                                onClick = { selectedFilterTheme = null },
-                                label = { Text("전체 (${memoList.size})", fontSize = 11.sp) }
                             )
                         }
-                        items(NoteTheme.values().toList()) { theme ->
-                            val count = memoList.count { it.theme == theme }
-                            FilterChip(
-                                selected = selectedFilterTheme == theme,
-                                onClick = { selectedFilterTheme = if (selectedFilterTheme == theme) null else theme },
-                                label = { Text("${theme.title} ($count)", fontSize = 11.sp) },
-                                leadingIcon = {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(10.dp)
-                                            .clip(CircleShape)
-                                            .background(theme.bgColor)
-                                            .border(1.dp, theme.pinColor, CircleShape)
-                                    )
-                                }
-                            )
+                ) {
+                    if (memo.theme.hasLines) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val lineGap = 22.dp.toPx()
+                            var y = lineGap + 20.dp.toPx()
+                            while (y < size.height) {
+                                drawLine(
+                                    color = Color(0xFF8D6E63).copy(alpha = 0.22f),
+                                    start = Offset(0f, y),
+                                    end = Offset(size.width, y),
+                                    strokeWidth = 1.dp.toPx()
+                                )
+                                y += lineGap
+                            }
                         }
                     }
-                }
-            }
-
-            // 필터링된 메모 그리드
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 160.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 100.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(22.dp),
-                modifier = Modifier.weight(1f).fillMaxWidth()
-            ) {
-                items(filteredMemoList, key = { it.id }) { memo ->
-                    val isSelected = selectedMemoIds.contains(memo.id)
-                    val isThisFluttering = flutteringMemoId == memo.id
-                    val flutterOffset = if (isThisFluttering) flutterAnim.value else 0f
 
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .rotate(memo.rotationAngle + flutterOffset)
-                            .scale(if (isThisFluttering) 1.05f else 1f)
-                            .shadow(
-                                elevation = if (isThisFluttering) 18.dp else (if (isSelected) 14.dp else 8.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                spotColor = Color.Black.copy(alpha = 0.32f),
-                                ambientColor = Color.Black.copy(alpha = 0.18f)
-                            )
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(memo.theme.bgColor)
-                            .border(
-                                width = if (isSelected) 3.dp else 0.dp,
-                                color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                            .pointerInput(isSelectionMode) {
-                                detectTapGestures(
-                                    onTap = {
-                                        if (isSelectionMode) {
-                                            if (isSelected) selectedMemoIds.remove(memo.id) else selectedMemoIds.add(memo.id)
-                                            if (selectedMemoIds.isEmpty()) isSelectionMode = false
-                                        } else {
-                                            scope.launch {
-                                                flutteringMemoId = memo.id
-                                                flutterAnim.animateTo(
-                                                    targetValue = 1f,
-                                                    animationSpec = keyframes {
-                                                        durationMillis = 320
-                                                        0f at 0
-                                                        -5f at 90
-                                                        4f at 190
-                                                        0f at 320
-                                                    }
-                                                )
-                                                editingMemo = memo
-                                                flutteringMemoId = null
-                                                flutterAnim.snapTo(0f)
-                                            }
-                                        }
-                                    },
-                                    onLongPress = {
-                                        if (!isSelectionMode) {
-                                            isSelectionMode = true
-                                            selectedMemoIds.add(memo.id)
-                                        }
-                                    }
-                                )
-                            }
-                    ) {
-                        if (memo.theme.hasLines) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val lineGap = 22.dp.toPx()
-                                var y = lineGap + 20.dp.toPx()
-                                while (y < size.height) {
-                                    drawLine(
-                                        color = Color(0xFF8D6E63).copy(alpha = 0.22f),
-                                        start = Offset(0f, y),
-                                        end = Offset(size.width, y),
-                                        strokeWidth = 1.dp.toPx()
-                                    )
-                                    y += lineGap
-                                }
-                            }
-                        }
+                            .align(Alignment.TopCenter)
+                            .padding(top = 8.dp)
+                            .size(14.dp)
+                            .shadow(elevation = 3.dp, shape = CircleShape)
+                            .clip(CircleShape)
+                            .background(memo.theme.pinColor)
+                            .border(1.2.dp, Color.White.copy(alpha = 0.85f), CircleShape)
+                    )
 
+                    if (isSelectionMode) {
                         Box(
                             modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 8.dp)
-                                .size(14.dp)
-                                .shadow(elevation = 3.dp, shape = CircleShape)
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp)
+                                .size(24.dp)
                                 .clip(CircleShape)
-                                .background(memo.theme.pinColor)
-                                .border(1.2.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                        )
-
-                        if (isSelectionMode) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(8.dp)
-                                    .size(24.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isSelected) Color(0xFF1976D2) else Color.White.copy(alpha = 0.7f))
-                                    .border(1.5.dp, Color(0xFF1976D2), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (isSelected) {
-                                    Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                }
+                                .background(if (isSelected) Color(0xFF1976D2) else Color.White.copy(alpha = 0.7f))
+                                .border(1.5.dp, Color(0xFF1976D2), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                             }
                         }
+                    }
 
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
-                        ) {
-                            val styledText = buildStyledAnnotatedString(
-                                context = context,
-                                text = memo.text,
-                                spans = memo.spans,
-                                defaultFont = memo.font,
-                                defaultColor = memo.theme.textColor,
-                                defaultSize = memo.fontSize
-                            )
-                            Text(text = styledText, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
+                    ) {
+                        val styledText = buildStyledAnnotatedString(
+                            context = context,
+                            text = memo.text,
+                            spans = memo.spans,
+                            defaultFont = memo.font,
+                            defaultColor = memo.theme.textColor,
+                            defaultSize = memo.fontSize
+                        )
+                        Text(text = styledText, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
-                            if (memo.strokes.isNotEmpty()) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    memo.strokes.forEach { s ->
-                                        if (s.points.size > 1) {
-                                            val path = Path().apply {
-                                                moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
-                                                for (p in s.points) { lineTo(p.x * size.width, p.y * size.height) }
-                                            }
-                                            drawPath(
-                                                path = path,
-                                                color = Color(android.graphics.Color.parseColor(s.colorHex)),
-                                                style = Stroke(width = s.width, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                            )
+                        if (memo.strokes.isNotEmpty()) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                memo.strokes.forEach { s ->
+                                    if (s.points.size > 1) {
+                                        val path = Path().apply {
+                                            moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
+                                            for (p in s.points) { lineTo(p.x * size.width, p.y * size.height) }
                                         }
+                                        drawPath(
+                                            path = path,
+                                            color = Color(android.graphics.Color.parseColor(s.colorHex)),
+                                            style = Stroke(width = s.width, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                        )
                                     }
                                 }
                             }
@@ -895,12 +826,14 @@ fun PegboardScreen(
                 }
             }
         } else {
-            // 하단 플로팅 독 (+ New, Sync, Backup, Restore)
+            // 하단 플로팅 독 (+ New, Search, Sync, Backup, Restore)
             Card(
                 shape = RoundedCornerShape(32.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp)
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -930,6 +863,20 @@ fun PegboardScreen(
                             Text("New", fontSize = 10.sp, color = Color.DarkGray)
                         }
 
+                        // 3번 요청 반영: 하단 툴바에 배치된 검색 및 필터 팝업 트리거
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable { isFilterSheetVisible = !isFilterSheetVisible }
+                        ) {
+                            Icon(
+                                Icons.Default.Search, 
+                                contentDescription = "Search", 
+                                tint = if (searchQuery.isNotEmpty() || selectedFilterTheme != null) Color(0xFF1976D2) else Color.DarkGray, 
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text("Search", fontSize = 10.sp, color = Color.DarkGray)
+                        }
+
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
@@ -941,7 +888,6 @@ fun PegboardScreen(
                             Text("Sync", fontSize = 10.sp, color = Color.DarkGray)
                         }
 
-                        // 백업 (내보내기)
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
@@ -952,7 +898,6 @@ fun PegboardScreen(
                             Text("Backup", fontSize = 10.sp, color = Color.DarkGray)
                         }
 
-                        // 복원 (가져오기)
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
@@ -961,6 +906,79 @@ fun PegboardScreen(
                         ) {
                             Icon(Icons.Default.Download, contentDescription = "Restore", tint = Color(0xFFE65100), modifier = Modifier.size(22.dp))
                             Text("Restore", fontSize = 10.sp, color = Color.DarkGray)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 하단 검색/필터 팝업 모달
+        if (isFilterSheetVisible) {
+            Card(
+                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 68.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("메모 검색 및 테마 필터", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        IconButton(onClick = { isFilterSheetVisible = false }, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.Gray)
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("단어 또는 내용 검색...", fontSize = 12.sp) },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(24.dp)
+                    )
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = selectedFilterTheme == null,
+                                onClick = { selectedFilterTheme = null },
+                                label = { Text("전체 (${memoList.size})", fontSize = 11.sp) }
+                            )
+                        }
+                        items(NoteTheme.values().toList()) { theme ->
+                            val count = memoList.count { it.theme == theme }
+                            FilterChip(
+                                selected = selectedFilterTheme == theme,
+                                onClick = { selectedFilterTheme = if (selectedFilterTheme == theme) null else theme },
+                                label = { Text("${theme.title} ($count)", fontSize = 11.sp) },
+                                leadingIcon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .clip(CircleShape)
+                                            .background(theme.bgColor)
+                                            .border(1.dp, theme.pinColor, CircleShape)
+                                    )
+                                }
+                            )
                         }
                     }
                 }
@@ -1012,8 +1030,10 @@ fun PegboardScreen(
         )
     }
 
+    // 풀스크린 오버레이 편집기 (1번 화면 밀림 문제 원천 차단)
     editingMemo?.let { targetMemo ->
-        MemoEditorDialog(
+        BackHandler { editingMemo = null }
+        MemoEditorOverlay(
             memo = targetMemo,
             onDismiss = { editingMemo = null },
             onSave = { updated ->
@@ -1033,14 +1053,16 @@ fun PegboardScreen(
     }
 }
 
+// 1번 화면 위로 밀림 방지 & 2번 돋보기 잔상 방지를 적용한 풀스크린 편집기
 @Composable
-fun MemoEditorDialog(
+fun MemoEditorOverlay(
     memo: MemoItem,
     onDismiss: () -> Unit,
     onSave: (MemoItem) -> Unit,
     onDelete: (String) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val focusManager = LocalFocusManager.current
     var tfValue by remember { mutableStateOf(TextFieldValue(memo.text, TextRange(memo.text.length))) }
     var currentTheme by remember { mutableStateOf(memo.theme) }
 
@@ -1055,7 +1077,7 @@ fun MemoEditorDialog(
     var activeStrikethrough by remember { mutableStateOf(memo.isStrikethrough) }
 
     var isPenMode by remember { mutableStateOf(false) }
-    var isEraserMode by remember { mutableStateOf(false) } // 신규 지우개 모드
+    var isEraserMode by remember { mutableStateOf(false) }
     var showMemoSettings by remember { mutableStateOf(false) }
 
     var selectedDrawColorHex by remember { mutableStateOf("#E53935") }
@@ -1112,509 +1134,487 @@ fun MemoEditorDialog(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .zIndex(100f)
+            .padding(
+                top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp,
+                bottom = 12.dp,
+                start = 12.dp,
+                end = 12.dp
+            ),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = currentTheme.bgColor),
+            elevation = CardDefaults.cardElevation(defaultElevation = 18.dp),
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.55f))
-                .padding(horizontal = 10.dp, vertical = 16.dp),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .fillMaxHeight()
+                .imePadding() // 키보드가 올라올 때 카드 전체가 위로 날아가지 않고 카드 내부만 수축
         ) {
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = currentTheme.bgColor),
-                elevation = CardDefaults.cardElevation(defaultElevation = 14.dp),
-                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.94f)
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-
-                        // 1단 제어 바 (키보드 / 펜 / 지우개 모드 선택)
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                ) {
+                    // 상단 고정 툴바 (키보드가 올라와도 항상 그 자리에 유지됨 - 1번 사진 해결)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { isPenMode = false; isEraserMode = false; showDrawingPalette = false },
+                                modifier = Modifier.size(36.dp)
                             ) {
-                                IconButton(
-                                    onClick = { isPenMode = false; isEraserMode = false; showDrawingPalette = false },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Keyboard,
-                                        contentDescription = "Text",
-                                        tint = if (!isPenMode && !isEraserMode) Color(0xFF1976D2) else currentTheme.textColor
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { isPenMode = true; isEraserMode = false; showDrawingPalette = true },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Create,
-                                        contentDescription = "Pen",
-                                        tint = if (isPenMode && !isEraserMode) Color(0xFF1976D2) else currentTheme.textColor
-                                    )
-                                }
-
-                                // 신규 지우개 버튼
-                                IconButton(
-                                    onClick = { isPenMode = true; isEraserMode = true; showDrawingPalette = false },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.AutoFixNormal,
-                                        contentDescription = "Eraser",
-                                        tint = if (isEraserMode) Color(0xFFE91E63) else currentTheme.textColor
-                                    )
-                                }
-
-                                if (isPenMode && !isEraserMode) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(android.graphics.Color.parseColor(selectedDrawColorHex)))
-                                            .border(1.5.dp, Color.White, CircleShape)
-                                            .clickable { showDrawingPalette = !showDrawingPalette }
-                                    )
-                                }
+                                Icon(Icons.Default.Keyboard, contentDescription = "Text", tint = if (!isPenMode && !isEraserMode) Color(0xFF1976D2) else currentTheme.textColor)
+                            }
+                            IconButton(
+                                onClick = { isPenMode = true; isEraserMode = false; showDrawingPalette = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.Create, contentDescription = "Pen", tint = if (isPenMode && !isEraserMode) Color(0xFF1976D2) else currentTheme.textColor)
+                            }
+                            IconButton(
+                                onClick = { isPenMode = true; isEraserMode = true; showDrawingPalette = false },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.AutoFixNormal, contentDescription = "Eraser", tint = if (isEraserMode) Color(0xFFE91E63) else currentTheme.textColor)
                             }
 
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = { if (strokes.isNotEmpty()) undoStack.add(strokes.removeAt(strokes.size - 1)) },
-                                    enabled = strokes.isNotEmpty(),
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (strokes.isNotEmpty()) currentTheme.textColor else Color.Gray)
-                                }
-                                IconButton(onClick = { onDelete(memo.id) }, modifier = Modifier.size(36.dp)) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.7f))
-                                }
-                                IconButton(onClick = { showMemoSettings = !showMemoSettings }, modifier = Modifier.size(36.dp)) {
-                                    Icon(Icons.Default.Tune, contentDescription = "Settings", tint = currentTheme.textColor)
-                                }
-                            }
-                        }
-
-                        // 2단 서식 툴바
-                        if (!isPenMode) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    TextButton(
-                                        onClick = { applyOrSetStyle(toggleBold = true) },
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                        colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (activeBold) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (activeBold) Color.White else currentTheme.textColor
-                                        )
-                                    ) { Text("B", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp) }
-
-                                    TextButton(
-                                        onClick = { applyOrSetStyle(toggleItalic = true) },
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                        colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (activeItalic) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (activeItalic) Color.White else currentTheme.textColor
-                                        )
-                                    ) { Text("I", fontStyle = FontStyle.Italic, fontSize = 13.sp) }
-
-                                    TextButton(
-                                        onClick = { applyOrSetStyle(toggleUnderline = true) },
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                        colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (activeUnderline) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (activeUnderline) Color.White else currentTheme.textColor
-                                        )
-                                    ) { Text("U", style = TextStyle(textDecoration = TextDecoration.Underline), fontSize = 13.sp) }
-
-                                    TextButton(
-                                        onClick = { applyOrSetStyle(toggleStrikethrough = true) },
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                        colors = ButtonDefaults.textButtonColors(
-                                            containerColor = if (activeStrikethrough) Color(0xFF1976D2) else Color.Transparent,
-                                            contentColor = if (activeStrikethrough) Color.White else currentTheme.textColor
-                                        )
-                                    ) { Text("S", style = TextStyle(textDecoration = TextDecoration.LineThrough), fontSize = 13.sp) }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .size(20.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(android.graphics.Color.parseColor(activeColorHex)))
-                                            .border(1.dp, Color.White, CircleShape)
-                                            .clickable {
-                                                val nextColor = when (activeColorHex) {
-                                                    "#2C2C2C" -> "#E53935"
-                                                    "#E53935" -> "#2196F3"
-                                                    "#2196F3" -> "#4CAF50"
-                                                    else -> "#2C2C2C"
-                                                }
-                                                applyOrSetStyle(newColor = nextColor)
-                                            }
-                                    )
-                                }
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
+                            if (isPenMode && !isEraserMode) {
+                                Box(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color.Black.copy(alpha = 0.07f))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        "-",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = currentTheme.textColor,
-                                        modifier = Modifier
-                                            .clickable { if (activeFontSize > 12) applyOrSetStyle(newSize = activeFontSize - 2) }
-                                            .padding(horizontal = 6.dp)
-                                    )
-                                    Text(
-                                        "${activeFontSize}pt",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = currentTheme.textColor,
-                                        modifier = Modifier.padding(horizontal = 4.dp)
-                                    )
-                                    Text(
-                                        "+",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = currentTheme.textColor,
-                                        modifier = Modifier
-                                            .clickable { if (activeFontSize < 34) applyOrSetStyle(newSize = activeFontSize + 2) }
-                                            .padding(horizontal = 6.dp)
-                                    )
-                                }
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(android.graphics.Color.parseColor(selectedDrawColorHex)))
+                                        .border(1.5.dp, Color.White, CircleShape)
+                                        .clickable { showDrawingPalette = !showDrawingPalette }
+                                )
                             }
                         }
 
-                        // 설정 패널
-                        AnimatedVisibility(visible = showMemoSettings) {
-                            Card(
-                                shape = RoundedCornerShape(8.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f)),
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { if (strokes.isNotEmpty()) undoStack.add(strokes.removeAt(strokes.size - 1)) },
+                                enabled = strokes.isNotEmpty(),
+                                modifier = Modifier.size(36.dp)
                             ) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("메모지 테마", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        NoteTheme.values().forEach { t ->
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(26.dp)
-                                                    .clip(CircleShape)
-                                                    .background(t.bgColor)
-                                                    .border(
-                                                        width = if (currentTheme == t) 2.5.dp else 1.dp,
-                                                        color = if (currentTheme == t) t.pinColor else Color.Gray.copy(alpha = 0.4f),
-                                                        shape = CircleShape
-                                                    )
-                                                    .clickable { currentTheme = t }
-                                            )
-                                        }
-                                    }
-
-                                    Text("나눔 손글씨 폰트", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    LazyRow(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        items(MemoFont.values().toList(), key = { it.name }) { f ->
-                                            OutlinedButton(
-                                                onClick = { applyOrSetStyle(newFont = f) },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                                colors = ButtonDefaults.outlinedButtonColors(
-                                                    containerColor = if (activeFont == f) Color(0xFFE0E0E0) else Color.Transparent
-                                                )
-                                            ) {
-                                                Text(
-                                                    f.title,
-                                                    fontSize = 10.sp,
-                                                    color = Color.Black,
-                                                    fontFamily = LocalFontLoader.getFontFamily(context, f)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                Icon(Icons.Default.Undo, contentDescription = "Undo", tint = if (strokes.isNotEmpty()) currentTheme.textColor else Color.Gray)
                             }
-                        }
-
-                        // 본문 텍스트 & 다채색 드로잉 / 지우개 캔버스
-                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                            if (currentTheme.hasLines) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val lineGap = 26.dp.toPx()
-                                    var y = lineGap + 10.dp.toPx()
-                                    while (y < size.height) {
-                                        drawLine(
-                                            color = Color(0xFF8D6E63).copy(alpha = 0.25f),
-                                            start = Offset(0f, y),
-                                            end = Offset(size.width, y),
-                                            strokeWidth = 1.dp.toPx()
-                                        )
-                                        y += lineGap
-                                    }
-                                }
+                            IconButton(onClick = { onDelete(memo.id) }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.7f))
                             }
-
-                            BasicTextField(
-                                value = tfValue,
-                                onValueChange = { newVal ->
-                                    val oldLen = tfValue.text.length
-                                    val newLen = newVal.text.length
-                                    if (newLen > oldLen) {
-                                        val insertStart = tfValue.selection.min
-                                        val insertEnd = insertStart + (newLen - oldLen)
-                                        spanList.add(
-                                            TextSpanItem(
-                                                start = insertStart,
-                                                end = insertEnd,
-                                                fontName = activeFont.name,
-                                                colorHex = activeColorHex,
-                                                fontSize = activeFontSize,
-                                                isBold = activeBold,
-                                                isItalic = activeItalic,
-                                                isUnderline = activeUnderline,
-                                                isStrikethrough = activeStrikethrough
-                                            )
-                                        )
-                                    }
-                                    tfValue = newVal
-                                },
-                                visualTransformation = {
-                                    androidx.compose.ui.text.input.TransformedText(
-                                        buildStyledAnnotatedString(context, tfValue.text, spanList, activeFont, currentTheme.textColor, activeFontSize),
-                                        androidx.compose.ui.text.input.OffsetMapping.Identity
-                                    )
-                                },
-                                textStyle = TextStyle(
-                                    fontSize = activeFontSize.sp,
-                                    lineHeight = (activeFontSize + 8).sp,
-                                    color = currentTheme.textColor
-                                ),
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .focusRequester(focusRequester)
-                                    .zIndex(if (!isPenMode) 2f else 0f),
-                                enabled = !isPenMode,
-                                decorationBox = { innerTextField ->
-                                    if (tfValue.text.isEmpty() && strokes.isEmpty()) {
-                                        Text(
-                                            text = "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
-                                            style = TextStyle(
-                                                color = currentTheme.textColor.copy(alpha = 0.4f),
-                                                fontSize = activeFontSize.sp,
-                                                fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
-                                            )
-                                        )
-                                    }
-                                    innerTextField()
-                                }
-                            )
-
-                            // 드로잉 및 지우개 인터랙션 캔버스
-                            Canvas(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .zIndex(if (isPenMode) 2f else 1f)
-                                    .pointerInput(isPenMode, isEraserMode, selectedDrawColorHex, selectedPenWidth) {
-                                        if (isPenMode) {
-                                            detectDragGestures(
-                                                onDragStart = { offset ->
-                                                    undoStack.clear()
-                                                    canvasWidth = size.width.toFloat().coerceAtLeast(1f)
-                                                    canvasHeight = size.height.toFloat().coerceAtLeast(1f)
-                                                    val normX = offset.x / canvasWidth
-                                                    val normY = offset.y / canvasHeight
-
-                                                    if (isEraserMode) {
-                                                        strokes.removeAll { s -> isStrokeHit(s, normX, normY) }
-                                                    } else {
-                                                        currentStrokePoints = listOf(NormPoint(normX, normY))
-                                                    }
-                                                },
-                                                onDrag = { change, _ ->
-                                                    change.consume()
-                                                    val normX = change.position.x / canvasWidth
-                                                    val normY = change.position.y / canvasHeight
-
-                                                    if (isEraserMode) {
-                                                        strokes.removeAll { s -> isStrokeHit(s, normX, normY) }
-                                                    } else {
-                                                        currentStrokePoints = currentStrokePoints + NormPoint(normX, normY)
-                                                    }
-                                                },
-                                                onDragEnd = {
-                                                    if (!isEraserMode && currentStrokePoints.isNotEmpty()) {
-                                                        strokes.add(NormStroke(currentStrokePoints, selectedDrawColorHex, selectedPenWidth))
-                                                        currentStrokePoints = emptyList()
-                                                    }
-                                                }
-                                            )
-                                        }
-                                    }
-                            ) {
-                                strokes.forEach { s ->
-                                    if (s.points.size > 1) {
-                                        val path = Path().apply {
-                                            moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
-                                            for (p in s.points) { lineTo(p.x * size.width, p.y * size.height) }
-                                        }
-                                        drawPath(
-                                            path = path,
-                                            color = Color(android.graphics.Color.parseColor(s.colorHex)),
-                                            style = Stroke(width = s.width, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                        )
-                                    }
-                                }
-                                if (!isEraserMode && currentStrokePoints.size > 1) {
-                                    val path = Path().apply {
-                                        moveTo(currentStrokePoints[0].x * size.width, currentStrokePoints[0].y * size.height)
-                                        for (p in currentStrokePoints) { lineTo(p.x * size.width, p.y * size.height) }
-                                    }
-                                    drawPath(
-                                        path = path,
-                                        color = Color(android.graphics.Color.parseColor(selectedDrawColorHex)),
-                                        style = Stroke(width = selectedPenWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                    )
-                                }
-                            }
-                        }
-
-                        // 하단 닫기 / 저장 버튼
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(onClick = onDismiss) { Text("닫기", color = currentTheme.textColor) }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Button(
-                                onClick = {
-                                    memo.text = tfValue.text
-                                    memo.theme = currentTheme
-                                    memo.font = activeFont
-                                    memo.penWidth = selectedPenWidth
-                                    memo.fontSize = activeFontSize
-                                    memo.isBold = activeBold
-                                    memo.isItalic = activeItalic
-                                    memo.isUnderline = activeUnderline
-                                    memo.isStrikethrough = activeStrikethrough
-                                    memo.spans.clear()
-                                    memo.spans.addAll(spanList)
-                                    memo.strokes.clear()
-                                    memo.strokes.addAll(strokes)
-                                    onSave(memo)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
-                            ) {
-                                Text("완료 및 저장", color = Color.White)
+                            IconButton(onClick = { showMemoSettings = !showMemoSettings }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Default.Tune, contentDescription = "Settings", tint = currentTheme.textColor)
                             }
                         }
                     }
 
-                    // 다크 플로팅 드로잉 팔레트 UI
-                    if (isPenMode && !isEraserMode && showDrawingPalette) {
-                        Card(
-                            shape = RoundedCornerShape(24.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF232528)),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 60.dp, start = 8.dp, end = 8.dp)
-                                .fillMaxWidth()
-                                .zIndex(10f)
+                    // 2단 서식 툴바
+                    if (!isPenMode) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("드로잉 펜 도구", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = { applyOrSetStyle(toggleBold = true) },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    colors = ButtonDefaults.textButtonColors(
+                                        containerColor = if (activeBold) Color(0xFF1976D2) else Color.Transparent,
+                                        contentColor = if (activeBold) Color.White else currentTheme.textColor
+                                    )
+                                ) { Text("B", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp) }
+
+                                TextButton(
+                                    onClick = { applyOrSetStyle(toggleItalic = true) },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    colors = ButtonDefaults.textButtonColors(
+                                        containerColor = if (activeItalic) Color(0xFF1976D2) else Color.Transparent,
+                                        contentColor = if (activeItalic) Color.White else currentTheme.textColor
+                                    )
+                                ) { Text("I", fontStyle = FontStyle.Italic, fontSize = 13.sp) }
+
+                                TextButton(
+                                    onClick = { applyOrSetStyle(toggleUnderline = true) },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    colors = ButtonDefaults.textButtonColors(
+                                        containerColor = if (activeUnderline) Color(0xFF1976D2) else Color.Transparent,
+                                        contentColor = if (activeUnderline) Color.White else currentTheme.textColor
+                                    )
+                                ) { Text("U", style = TextStyle(textDecoration = TextDecoration.Underline), fontSize = 13.sp) }
+
+                                TextButton(
+                                    onClick = { applyOrSetStyle(toggleStrikethrough = true) },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    colors = ButtonDefaults.textButtonColors(
+                                        containerColor = if (activeStrikethrough) Color(0xFF1976D2) else Color.Transparent,
+                                        contentColor = if (activeStrikethrough) Color.White else currentTheme.textColor
+                                    )
+                                ) { Text("S", style = TextStyle(textDecoration = TextDecoration.LineThrough), fontSize = 13.sp) }
+
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(android.graphics.Color.parseColor(activeColorHex)))
+                                        .border(1.dp, Color.White, CircleShape)
+                                        .clickable {
+                                            val nextColor = when (activeColorHex) {
+                                                "#2C2C2C" -> "#E53935"
+                                                "#E53935" -> "#2196F3"
+                                                "#2196F3" -> "#4CAF50"
+                                                else -> "#2C2C2C"
+                                            }
+                                            applyOrSetStyle(newColor = nextColor)
+                                        }
+                                )
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color.Black.copy(alpha = 0.07f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    "-",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = currentTheme.textColor,
+                                    modifier = Modifier.clickable { if (activeFontSize > 12) applyOrSetStyle(newSize = activeFontSize - 2) }.padding(horizontal = 6.dp)
+                                )
+                                Text("${activeFontSize}pt", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = currentTheme.textColor, modifier = Modifier.padding(horizontal = 4.dp))
+                                Text(
+                                    "+",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = currentTheme.textColor,
+                                    modifier = Modifier.clickable { if (activeFontSize < 34) applyOrSetStyle(newSize = activeFontSize + 2) }.padding(horizontal = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // 테마 및 폰트 설정 패널
+                    AnimatedVisibility(visible = showMemoSettings) {
+                        Card(
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f)),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("메모지 테마", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    NoteTheme.values().forEach { t ->
                                         Box(
                                             modifier = Modifier
-                                                .width(44.dp)
-                                                .height((selectedPenWidth / 2f).coerceIn(2f, 10f).dp)
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(Color(android.graphics.Color.parseColor(selectedDrawColorHex)))
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .background(t.bgColor)
+                                                .border(
+                                                    width = if (currentTheme == t) 2.5.dp else 1.dp,
+                                                    color = if (currentTheme == t) t.pinColor else Color.Gray.copy(alpha = 0.4f),
+                                                    shape = CircleShape
+                                                )
+                                                .clickable { currentTheme = t }
                                         )
-                                    }
-                                    IconButton(onClick = { showDrawingPalette = false }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.LightGray)
                                     }
                                 }
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("굵기", color = Color.Gray, fontSize = 11.sp)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        listOf(2.5f to "초미세", 5f to "보통", 10f to "굵게", 18f to "형광펜").forEach { (w, label) ->
-                                            OutlinedButton(
-                                                onClick = { selectedPenWidth = w },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                                colors = ButtonDefaults.outlinedButtonColors(
-                                                    containerColor = if (selectedPenWidth == w) Color(0xFF37474F) else Color.Transparent
-                                                ),
-                                                border = ButtonDefaults.outlinedButtonBorder.copy(
-                                                    width = if (selectedPenWidth == w) 1.5.dp else 0.5.dp
-                                                )
-                                            ) {
-                                                Text(label, color = if (selectedPenWidth == w) Color(0xFF64B5F6) else Color.LightGray, fontSize = 10.sp)
-                                            }
+                                Text("나눔 손글씨 폰트", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                                    items(MemoFont.values().toList(), key = { it.name }) { f ->
+                                        OutlinedButton(
+                                            onClick = { applyOrSetStyle(newFont = f) },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (activeFont == f) Color(0xFFE0E0E0) else Color.Transparent)
+                                        ) {
+                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = LocalFontLoader.getFontFamily(context, f))
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    colorPalette.forEach { hex ->
-                                        val isSelected = selectedDrawColorHex.equals(hex, ignoreCase = true)
-                                        Box(
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(android.graphics.Color.parseColor(hex)))
-                                                .border(
-                                                    width = if (isSelected) 2.5.dp else 1.dp,
-                                                    color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
-                                                    shape = CircleShape
-                                                )
-                                                .clickable { selectedDrawColorHex = hex },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            if (isSelected) {
-                                                Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = null,
-                                                    tint = if (hex == "#FFFFFF" || hex == "#FFEB3B") Color.Black else Color.White,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
+                    // 본문 텍스트 & 다채색 드로잉 / 지우개 캔버스 (2번 사진: 돋보기 잔상 방지 래퍼 적용)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    // 빈 공간 터치 시 선택 핸들과 Magnifier 강제 해제
+                                    if (tfValue.selection.collapsed) {
+                                        focusManager.clearFocus()
+                                    }
+                                }
+                            }
+                    ) {
+                        if (currentTheme.hasLines) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val lineGap = 26.dp.toPx()
+                                var y = lineGap + 10.dp.toPx()
+                                while (y < size.height) {
+                                    drawLine(
+                                        color = Color(0xFF8D6E63).copy(alpha = 0.25f),
+                                        start = Offset(0f, y),
+                                        end = Offset(size.width, y),
+                                        strokeWidth = 1.dp.toPx()
+                                    )
+                                    y += lineGap
+                                }
+                            }
+                        }
+
+                        BasicTextField(
+                            value = tfValue,
+                            onValueChange = { newVal ->
+                                val oldLen = tfValue.text.length
+                                val newLen = newVal.text.length
+                                if (newLen > oldLen) {
+                                    val insertStart = tfValue.selection.min
+                                    val insertEnd = insertStart + (newLen - oldLen)
+                                    spanList.add(
+                                        TextSpanItem(
+                                            start = insertStart,
+                                            end = insertEnd,
+                                            fontName = activeFont.name,
+                                            colorHex = activeColorHex,
+                                            fontSize = activeFontSize,
+                                            isBold = activeBold,
+                                            isItalic = activeItalic,
+                                            isUnderline = activeUnderline,
+                                            isStrikethrough = activeStrikethrough
+                                        )
+                                    )
+                                }
+                                tfValue = newVal
+                            },
+                            visualTransformation = {
+                                androidx.compose.ui.text.input.TransformedText(
+                                    buildStyledAnnotatedString(context, tfValue.text, spanList, activeFont, currentTheme.textColor, activeFontSize),
+                                    androidx.compose.ui.text.input.OffsetMapping.Identity
+                                )
+                            },
+                            textStyle = TextStyle(
+                                fontSize = activeFontSize.sp,
+                                lineHeight = (activeFontSize + 8).sp,
+                                color = currentTheme.textColor
+                            ),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .focusRequester(focusRequester)
+                                .zIndex(if (!isPenMode) 2f else 0f),
+                            enabled = !isPenMode,
+                            decorationBox = { innerTextField ->
+                                if (tfValue.text.isEmpty() && strokes.isEmpty()) {
+                                    Text(
+                                        text = "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
+                                        style = TextStyle(
+                                            color = currentTheme.textColor.copy(alpha = 0.4f),
+                                            fontSize = activeFontSize.sp,
+                                            fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
+                                        )
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(if (isPenMode) 2f else 1f)
+                                .pointerInput(isPenMode, isEraserMode, selectedDrawColorHex, selectedPenWidth) {
+                                    if (isPenMode) {
+                                        detectDragGestures(
+                                            onDragStart = { offset ->
+                                                undoStack.clear()
+                                                canvasWidth = size.width.toFloat().coerceAtLeast(1f)
+                                                canvasHeight = size.height.toFloat().coerceAtLeast(1f)
+                                                val normX = offset.x / canvasWidth
+                                                val normY = offset.y / canvasHeight
+
+                                                if (isEraserMode) {
+                                                    strokes.removeAll { s -> isStrokeHit(s, normX, normY) }
+                                                } else {
+                                                    currentStrokePoints = listOf(NormPoint(normX, normY))
+                                                }
+                                            },
+                                            onDrag = { change, _ ->
+                                                change.consume()
+                                                val normX = change.position.x / canvasWidth
+                                                val normY = change.position.y / canvasHeight
+
+                                                if (isEraserMode) {
+                                                    strokes.removeAll { s -> isStrokeHit(s, normX, normY) }
+                                                } else {
+                                                    currentStrokePoints = currentStrokePoints + NormPoint(normX, normY)
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                if (!isEraserMode && currentStrokePoints.isNotEmpty()) {
+                                                    strokes.add(NormStroke(currentStrokePoints, selectedDrawColorHex, selectedPenWidth))
+                                                    currentStrokePoints = emptyList()
+                                                }
                                             }
+                                        )
+                                    }
+                                }
+                        ) {
+                            strokes.forEach { s ->
+                                if (s.points.size > 1) {
+                                    val path = Path().apply {
+                                        moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
+                                        for (p in s.points) { lineTo(p.x * size.width, p.y * size.height) }
+                                    }
+                                    drawPath(
+                                        path = path,
+                                        color = Color(android.graphics.Color.parseColor(s.colorHex)),
+                                        style = Stroke(width = s.width, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                    )
+                                }
+                            }
+                            if (!isEraserMode && currentStrokePoints.size > 1) {
+                                val path = Path().apply {
+                                    moveTo(currentStrokePoints[0].x * size.width, currentStrokePoints[0].y * size.height)
+                                    for (p in currentStrokePoints) { lineTo(p.x * size.width, p.y * size.height) }
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = Color(android.graphics.Color.parseColor(selectedDrawColorHex)),
+                                    style = Stroke(width = selectedPenWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                            }
+                        }
+                    }
+
+                    // 하단 닫기 / 저장 버튼
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("닫기", color = currentTheme.textColor) }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                memo.text = tfValue.text
+                                memo.theme = currentTheme
+                                memo.font = activeFont
+                                memo.penWidth = selectedPenWidth
+                                memo.fontSize = activeFontSize
+                                memo.isBold = activeBold
+                                memo.isItalic = activeItalic
+                                memo.isUnderline = activeUnderline
+                                memo.isStrikethrough = activeStrikethrough
+                                memo.spans.clear()
+                                memo.spans.addAll(spanList)
+                                memo.strokes.clear()
+                                memo.strokes.addAll(strokes)
+                                onSave(memo)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                        ) {
+                            Text("완료 및 저장", color = Color.White)
+                        }
+                    }
+                }
+
+                // 다크 플로팅 드로잉 팔레트 UI
+                if (isPenMode && !isEraserMode && showDrawingPalette) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF232528)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 60.dp, start = 8.dp, end = 8.dp)
+                            .fillMaxWidth()
+                            .zIndex(10f)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("드로잉 펜 도구", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Box(
+                                        modifier = Modifier
+                                            .width(44.dp)
+                                            .height((selectedPenWidth / 2f).coerceIn(2f, 10f).dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(android.graphics.Color.parseColor(selectedDrawColorHex)))
+                                    )
+                                }
+                                IconButton(onClick = { showDrawingPalette = false }, modifier = Modifier.size(24.dp)) {
+                                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.LightGray)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("굵기", color = Color.Gray, fontSize = 11.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    listOf(2.5f to "초미세", 5f to "보통", 10f to "굵게", 18f to "형광펜").forEach { (w, label) ->
+                                        OutlinedButton(
+                                            onClick = { selectedPenWidth = w },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = if (selectedPenWidth == w) Color(0xFF37474F) else Color.Transparent
+                                            ),
+                                            border = ButtonDefaults.outlinedButtonBorder.copy(
+                                                width = if (selectedPenWidth == w) 1.5.dp else 0.5.dp
+                                            )
+                                        ) {
+                                            Text(label, color = if (selectedPenWidth == w) Color(0xFF64B5F6) else Color.LightGray, fontSize = 10.sp)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                colorPalette.forEach { hex ->
+                                    val isSelected = selectedDrawColorHex.equals(hex, ignoreCase = true)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(android.graphics.Color.parseColor(hex)))
+                                            .border(
+                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
+                                                shape = CircleShape
+                                            )
+                                            .clickable { selectedDrawColorHex = hex },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isSelected) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = if (hex == "#FFFFFF" || hex == "#FFEB3B") Color.Black else Color.White,
+                                                modifier = Modifier.size(14.dp)
+                                            )
                                         }
                                     }
                                 }
