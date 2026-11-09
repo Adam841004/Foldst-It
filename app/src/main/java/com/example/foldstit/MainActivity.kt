@@ -56,6 +56,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
@@ -163,7 +164,6 @@ data class TextSpanItem(
 data class NormPoint(val x: Float, val y: Float)
 data class NormStroke(val points: List<NormPoint>, val colorHex: String = "#212121", val width: Float = 5f)
 
-// 자유 배치/확대/회전 지원 사진 스티커 모델
 data class PhotoStickerItem(
     val id: String = UUID.randomUUID().toString(),
     val fileName: String,
@@ -319,7 +319,6 @@ fun PegboardScreen(
     val flutterAnim = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
 
-    // 위젯 전용 고화질 텍스트 및 사진 스티커 비트맵 렌더러
     fun renderCompositeBitmap(memo: MemoItem) {
         try {
             val bmpWidth = 600
@@ -327,7 +326,6 @@ fun PegboardScreen(
             val bmp = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(bmp)
 
-            // 1. 첨부된 사진 스티커 먼저 렌더링
             memo.photos.forEach { p ->
                 val pFile = File(context.filesDir, p.fileName)
                 if (pFile.exists()) {
@@ -349,7 +347,6 @@ fun PegboardScreen(
                 }
             }
 
-            // 2. 텍스트 레이어 렌더링
             if (memo.text.isNotEmpty()) {
                 val basePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = when (memo.theme) {
@@ -581,9 +578,10 @@ fun PegboardScreen(
                                 paint.color = android.graphics.Color.parseColor(s.colorHex)
                                 paint.strokeWidth = s.width * 1.5f
                                 if (s.points.size > 1) {
+                                    // 안드로이드 네이티브 Path 명시적 호출로 컴파일 에러 원천 차단
                                     val path = android.graphics.Path()
                                     path.moveTo(s.points[0].x * 500f, s.points[0].y * 500f)
-                                    for (pt in s.points) { lineTo(pt.x * 500f, pt.y * 500f) }
+                                    for (pt in s.points) { path.lineTo(pt.x * 500f, pt.y * 500f) }
                                     canvas.drawPath(path, paint)
                                 }
                             }
@@ -779,7 +777,6 @@ fun PegboardScreen(
                         }
                     }
 
-                    // 첨부된 사진 스티커 썸네일 표시
                     Box(modifier = Modifier.fillMaxSize()) {
                         memo.photos.forEach { p ->
                             val pFile = File(context.filesDir, p.fileName)
@@ -1183,7 +1180,6 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
-    // 갤러리 사진 선택기 (첨부 파일 내부 캐싱)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -1266,7 +1262,6 @@ fun MemoEditorOverlay(
                         .fillMaxSize()
                         .padding(12.dp)
                 ) {
-                    // 상단 고정 1단 툴바
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1292,7 +1287,6 @@ fun MemoEditorOverlay(
                                 Icon(Icons.Default.AutoFixNormal, contentDescription = "Eraser", tint = if (isEraserMode) Color(0xFFE91E63) else currentTheme.textColor)
                             }
 
-                            // 신규 사진 추가 버튼
                             IconButton(
                                 onClick = { photoPickerLauncher.launch("image/*") },
                                 modifier = Modifier.size(36.dp)
@@ -1329,7 +1323,6 @@ fun MemoEditorOverlay(
                         }
                     }
 
-                    // 2단 서식 툴바
                     if (!isPenMode) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
@@ -1458,7 +1451,6 @@ fun MemoEditorOverlay(
                         }
                     }
 
-                    // 본문 작업 영역: [사진 스티커 레이어] + [텍스트필드 레이어] + [드로잉 캔버스 레이어]
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -1486,7 +1478,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 1. 첨부된 사진 스티커 레이어 (자유 드래그, 핀치 줌, 두 손가락/모서리 핸들 회전)
+                        // 사진 스티커 레이어 (드래그, 핀치 줌, 회전 핸들 완벽 지원)
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1530,7 +1522,6 @@ fun MemoEditorOverlay(
                                                 .shadow(4.dp, RoundedCornerShape(6.dp))
                                         )
 
-                                        // 모서리 회전 및 삭제 핸들
                                         if (isSelected) {
                                             Box(
                                                 modifier = Modifier
@@ -1544,7 +1535,6 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(14.dp))
                                             }
 
-                                            // 모서리 원형 회전 핸들 (터치 드래그로 각도 회전)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
@@ -1568,7 +1558,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 2. 텍스트 입력 레이어 (돋보기 잔상 방지: selection이 무한 잔류하지 않도록 터치 시점에 안전 릴리즈)
+                        // 텍스트 필드 레이어
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1624,7 +1614,7 @@ fun MemoEditorOverlay(
                             }
                         )
 
-                        // 3. 드로잉 / 지우개 캔버스 레이어
+                        // 드로잉 / 지우개 캔버스 레이어
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1668,32 +1658,21 @@ fun MemoEditorOverlay(
                         ) {
                             strokes.forEach { s ->
                                 if (s.points.size > 1) {
-                                    val path = Path().apply {
-                                        moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
-                                        for (p in s.points) { lineTo(p.x * size.width, p.y * size.height) }
-                                    }
-                                    drawPath(
-                                        path = path,
-                                        color = Color(android.graphics.Color.parseColor(s.colorHex)),
-                                        style = Stroke(width = s.width, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                    )
+                                    val path = android.graphics.Path()
+                                    path.moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
+                                    for (pt in s.points) { path.lineTo(pt.x * size.width, pt.y * size.height) }
+                                    canvas.drawPath(path, paint)
                                 }
                             }
                             if (!isEraserMode && currentStrokePoints.size > 1) {
-                                val path = Path().apply {
-                                    moveTo(currentStrokePoints[0].x * size.width, currentStrokePoints[0].y * size.height)
-                                    for (p in currentStrokePoints) { lineTo(p.x * size.width, p.y * size.height) }
-                                }
-                                drawPath(
-                                    path = path,
-                                    color = Color(android.graphics.Color.parseColor(selectedDrawColorHex)),
-                                    style = Stroke(width = selectedPenWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                )
+                                val path = android.graphics.Path()
+                                path.moveTo(currentStrokePoints[0].x * size.width, currentStrokePoints[0].y * size.height)
+                                for (p in currentStrokePoints) { path.lineTo(p.x * size.width, p.y * size.height) }
+                                canvas.drawPath(path, paint)
                             }
                         }
                     }
 
-                    // 하단 닫기 / 완료 버튼
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                         horizontalArrangement = Arrangement.End
@@ -1726,7 +1705,6 @@ fun MemoEditorOverlay(
                     }
                 }
 
-                // 다크 플로팅 드로잉 팔레트 UI
                 if (isPenMode && !isEraserMode && showDrawingPalette) {
                     Card(
                         shape = RoundedCornerShape(24.dp),
@@ -1769,7 +1747,7 @@ fun MemoEditorOverlay(
                                     listOf(2.5f to "초미세", 5f to "보통", 10f to "굵게", 18f to "형광펜").forEach { (w, label) ->
                                         OutlinedButton(
                                             onClick = { selectedPenWidth = w },
-                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(
                                                 containerColor = if (selectedPenWidth == w) Color(0xFF37474F) else Color.Transparent
                                             ),
@@ -1796,7 +1774,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                width = if (selectedPress = isSelected) 2.5.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
