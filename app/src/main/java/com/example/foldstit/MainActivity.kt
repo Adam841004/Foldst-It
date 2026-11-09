@@ -274,17 +274,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 컴포저블 컨텍스트 내부에서 폰트 패밀리 맵을 미리 받아 인자로 전달하도록 수정 (컴파일 에러 원천 차단)
+// Composable 제약을 완벽히 준수하는 캐시 기반 스타일 스트링 생성기
 @Composable
 fun rememberCachedStyledString(
+    context: Context,
     text: String,
     spans: List<TextSpanItem>,
     defaultFont: MemoFont,
     defaultColor: Color,
-    defaultSize: Int,
-    fontFamilyMap: Map<MemoFont, FontFamily>
+    defaultSize: Int
 ): AnnotatedString {
-    val defaultFamily = fontFamilyMap[defaultFont] ?: FontFamily.Default
+    // 순수 일반 객체인 FontFamily를 미리 안전하게 캐싱
+    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
+    val families = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    }
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
         buildAnnotatedString {
@@ -304,7 +308,7 @@ fun rememberCachedStyledString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFamily = fontFamilyMap[fontEnum] ?: defaultFamily
+                        val customFamily = families[fontEnum] ?: defaultFamily
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
@@ -876,12 +880,12 @@ fun PegboardScreen(
                         val defaultFamily = LocalFontLoader.getFontFamily(context, memo.font)
                         val fontFamilies = MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
                         val styledText = rememberCachedStyledString(
+                            context = context,
                             text = memo.text,
                             spans = memo.spans,
                             defaultFont = memo.font,
                             defaultColor = memo.theme.textColor,
-                            defaultSize = memo.fontSize,
-                            fontFamilyMap = fontFamilies
+                            defaultSize = memo.fontSize
                         )
                         Text(text = styledText, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
@@ -1221,8 +1225,8 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
-    // Composable 범위 내에서 폰트 패밀리 캐시 사전 생성
-    val defaultFamily = LocalFontLoader.getFontFamily(context, activeFont)
+    // Composable 범위 내에서 폰트 패밀리 미리 로드
+    val defaultFamily = remember(context, activeFont) { LocalFontLoader.getFontFamily(context, activeFont) }
     val fontFamilies = remember(context) {
         MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
     }
@@ -1554,12 +1558,12 @@ fun MemoEditorOverlay(
                             visualTransformation = {
                                 androidx.compose.ui.text.input.TransformedText(
                                     rememberCachedStyledString(
+                                        context = context,
                                         text = tfValue.text,
                                         spans = spanList,
                                         defaultFont = activeFont,
                                         defaultColor = currentTheme.textColor,
-                                        defaultSize = activeFontSize,
-                                        fontFamilyMap = fontFamilies
+                                        defaultSize = activeFontSize
                                     ),
                                     androidx.compose.ui.text.input.OffsetMapping.Identity
                                 )
