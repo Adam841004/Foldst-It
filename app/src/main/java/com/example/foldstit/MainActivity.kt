@@ -274,7 +274,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Composable 제약을 완벽히 준수하는 최적화된 텍스트 스타일 생성 함수
+// 컴파일 에러 원천 차단 및 캐시 최적화된 텍스트 스타일 생성 함수
 @Composable
 fun buildOptimizedAnnotatedString(
     context: Context,
@@ -284,7 +284,7 @@ fun buildOptimizedAnnotatedString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
+    val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
     val fontMap = remember(context) {
         MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
     }
