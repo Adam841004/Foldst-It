@@ -274,7 +274,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 완전 무결한 컴파일 안전 스타일 생성 함수
 @Composable
 fun buildOptimizedAnnotatedString(
     context: Context,
@@ -284,8 +283,7 @@ fun buildOptimizedAnnotatedString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
-    
+    val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
         buildAnnotatedString {
             append(text)
@@ -1219,8 +1217,6 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
-    val defaultFamily = LocalFontLoader.getFontFamily(context, activeFont)
-
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -1575,7 +1571,7 @@ fun MemoEditorOverlay(
                                         style = TextStyle(
                                             color = currentTheme.textColor.copy(alpha = 0.4f),
                                             fontSize = activeFontSize.sp,
-                                            fontFamily = defaultFamily
+                                            fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
                                         )
                                     )
                                 }
@@ -1658,7 +1654,7 @@ fun MemoEditorOverlay(
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate/Scale", tint = Color.White, modifier = Modifier.size(18.dp))
                                             }
                                         }
                                     }
