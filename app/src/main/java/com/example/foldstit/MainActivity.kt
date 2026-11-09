@@ -167,8 +167,8 @@ data class NormStroke(val points: List<NormPoint>, val colorHex: String = "#2121
 data class PhotoStickerItem(
     val id: String = UUID.randomUUID().toString(),
     val fileName: String,
-    var offsetX: Float = 50f,
-    var offsetY: Float = 50f,
+    var offsetX: Float = 40f,
+    var offsetY: Float = 60f,
     var scale: Float = 1.0f,
     var rotation: Float = 0.0f
 )
@@ -1472,6 +1472,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
+                        // 최적화된 사진 스티커 렌더링 및 제스처 수신 레이어
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
