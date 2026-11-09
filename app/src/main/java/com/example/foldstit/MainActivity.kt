@@ -127,6 +127,7 @@ enum class MemoFont(val title: String, val fileName: String) {
 
 object LocalFontLoader {
     private val typefaceCache = mutableMapOf<String, Typeface>()
+    private val fontFamilyCache = mutableMapOf<String, FontFamily>()
 
     fun getTypeface(context: Context, font: MemoFont): Typeface {
         if (font.fileName.isEmpty()) return Typeface.DEFAULT
@@ -143,8 +144,13 @@ object LocalFontLoader {
     }
 
     fun getFontFamily(context: Context, font: MemoFont): FontFamily {
+        if (font.fileName.isEmpty()) return FontFamily.Default
+        if (fontFamilyCache.containsKey(font.name)) return fontFamilyCache[font.name]!!
+
         val tf = getTypeface(context, font)
-        return FontFamily(tf)
+        val family = FontFamily(tf)
+        fontFamilyCache[font.name] = family
+        return family
     }
 }
 
@@ -283,19 +289,19 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    // Composable context에서 안전하게 폰트 패밀리 미리 로드
-    val defaultFontFamily = LocalFontLoader.getFontFamily(context, defaultFont)
+    // 폰트 패밀리들을 미리 한 번에 로드하여 컴파일 에러 및 불필요한 반복 연산 방지
+    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
     val fontFamilies = remember(context) {
         MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
     }
 
-    return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFontFamily) {
+    return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
         buildAnnotatedString {
             append(text)
             if (spans.isEmpty()) {
                 addStyle(
                     SpanStyle(
-                        fontFamily = defaultFontFamily,
+                        fontFamily = defaultFamily,
                         color = defaultColor,
                         fontSize = defaultSize.sp
                     ),
@@ -307,7 +313,7 @@ fun rememberCachedStyledString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFamily = fontFamilies[fontEnum] ?: defaultFontFamily
+                        val customFamily = fontFamilies[fontEnum] ?: defaultFamily
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
