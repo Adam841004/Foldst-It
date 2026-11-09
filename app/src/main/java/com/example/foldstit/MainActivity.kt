@@ -1769,7 +1769,7 @@ fun MemoEditorOverlay(
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Modifier.SpaceBetween,
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 colorPalette.forEach { hex ->
