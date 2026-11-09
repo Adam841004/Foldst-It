@@ -11,9 +11,11 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.text.Layout
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -72,6 +74,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -188,7 +191,10 @@ data class MemoItem(
     val strokes: MutableList<NormStroke> = mutableListOf(),
     val photos: MutableList<PhotoStickerItem> = mutableListOf(),
     var rotationAngle: Float = 0f,
-    var updatedAt: Long = System.currentTimeMillis()
+    var updatedAt: Long = System.currentTimeMillis(),
+    var pdfFileName: String? = null,
+    var currentPageIndex: Int = 0,
+    var totalPdfPages: Int = 0
 )
 
 class MainActivity : ComponentActivity() {
@@ -291,6 +297,82 @@ fun isStrokeHit(stroke: NormStroke, touchX: Float, touchY: Float, threshold: Flo
         if (dist <= threshold) return true
     }
     return false
+}
+
+class PdfRendererManager(private val context: Context, private val file: File) : AutoCloseable {
+    private var fileDescriptor: ParcelFileDescriptor? = null
+    private var pdfRenderer: PdfRenderer? = null
+    private var currentPage: PdfRenderer.Page? = null
+
+    val pageCount: Int
+        get() = pdfRenderer?.pageCount ?: 0
+
+    init {
+        try {
+            fileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            pdfRenderer = PdfRenderer(fileDescriptor!!)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun renderPageToBitmap(pageIndex: Int, targetWidth: Int, targetHeight: Int): Bitmap? {
+        if (pdfRenderer == null || pageIndex !in 0 until pageCount) return null
+        return try {
+            currentPage?.close()
+            currentPage = pdfRenderer?.openPage(pageIndex)
+            currentPage?.let { page ->
+                val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.RGB_565)
+                bitmap.eraseColor(android.graphics.Color.WHITE)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bitmap
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    override fun close() {
+        try {
+            currentPage?.close()
+            pdfRenderer?.close()
+            fileDescriptor?.close()
+        } catch (_: Exception) {}
+    }
+}
+
+@Composable
+fun PdfBackgroundViewer(
+    pdfFile: File,
+    currentPageIndex: Int,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var pdfBitmap by remember(pdfFile, currentPageIndex) { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(pdfFile, currentPageIndex) {
+        withContext(Dispatchers.IO) {
+            val rendererManager = PdfRendererManager(context, pdfFile)
+            val bitmap = rendererManager.renderPageToBitmap(currentPageIndex, 1080, 1440)
+            withContext(Dispatchers.Main) {
+                pdfBitmap = bitmap
+            }
+            rendererManager.close()
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (pdfBitmap != null) {
+            Image(
+                bitmap = pdfBitmap!!.asImageBitmap(),
+                contentDescription = "PDF Page $currentPageIndex",
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            CircularProgressIndicator(modifier = Modifier.size(36.dp), color = Color(0xFF1976D2))
+        }
+    }
 }
 
 @Composable
@@ -422,7 +504,10 @@ fun PegboardScreen(
                     isUnderline = obj.optBoolean("isUnderline", false),
                     isStrikethrough = obj.optBoolean("isStrikethrough", false),
                     rotationAngle = obj.optDouble("rotationAngle", 0.0).toFloat(),
-                    updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+                    updatedAt = obj.optLong("updatedAt", System.currentTimeMillis()),
+                    pdfFileName = obj.optString("pdfFileName", "").ifEmpty { null },
+                    currentPageIndex = obj.optInt("currentPageIndex", 0),
+                    totalPdfPages = obj.optInt("totalPdfPages", 0)
                 )
 
                 val spansArr = obj.optJSONArray("spans")
@@ -497,6 +582,9 @@ fun PegboardScreen(
                 put("isStrikethrough", memo.isStrikethrough)
                 put("rotationAngle", memo.rotationAngle)
                 put("updatedAt", memo.updatedAt)
+                put("pdfFileName", memo.pdfFileName ?: "")
+                put("currentPageIndex", memo.currentPageIndex)
+                put("totalPdfPages", memo.totalPdfPages)
 
                 val spArr = JSONArray()
                 memo.spans.forEach { sp ->
@@ -1136,7 +1224,7 @@ fun MemoEditorOverlay(
     onSave: (MemoItem) -> Unit,
     onDelete: (String) -> Unit
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     var tfValue by remember { mutableStateOf(TextFieldValue(memo.text, TextRange(memo.text.length))) }
     var currentTheme by remember { mutableStateOf(memo.theme) }
@@ -1160,6 +1248,11 @@ fun MemoEditorOverlay(
     var selectedDrawColorHex by remember { mutableStateOf("#E53935") }
     var selectedPenWidth by remember { mutableStateOf(memo.penWidth) }
     var showDrawingPalette by remember { mutableStateOf(false) }
+
+    // PDF 배경 관련 상태 관리 변수들
+    var currentPdfFileName by remember { mutableStateOf(memo.pdfFileName) }
+    var currentPageIndex by remember { mutableStateOf(memo.currentPageIndex) }
+    var totalPdfPages by remember { mutableStateOf(memo.totalPdfPages) }
 
     val colorPalette = listOf(
         "#2C2C2C", "#E53935", "#FF9800", "#FFEB3B", "#4CAF50",
@@ -1189,6 +1282,29 @@ fun MemoEditorOverlay(
                 Toast.makeText(context, "사진이 추가되었습니다. 터치하여 위치를 이동하거나 크기를 조절하세요.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "사진 불러오기 실패", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // PDF 파일 선택 런처 추가
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val fileName = "pdf_${UUID.randomUUID()}.pdf"
+                val outFile = File(context.filesDir, fileName)
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                }
+                val renderer = PdfRendererManager(context, outFile)
+                currentPdfFileName = fileName
+                totalPdfPages = renderer.pageCount
+                currentPageIndex = 0
+                renderer.close()
+                Toast.makeText(context, "PDF 로드 완료 (총 ${totalPdfPages}페이지)", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "PDF 불러오기 실패", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1286,6 +1402,14 @@ fun MemoEditorOverlay(
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Add Photo", tint = Color(0xFF00897B))
+                            }
+
+                            // PDF 불러오기 버튼 추가
+                            IconButton(
+                                onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = "Load PDF", tint = Color(0xFFD32F2F))
                             }
 
                             if (isPenMode && !isEraserMode) {
@@ -1456,7 +1580,49 @@ fun MemoEditorOverlay(
                                 }
                             }
                     ) {
-                        if (currentTheme.hasLines) {
+                        // [Layer 0] PDF 배경 렌더링 또는 기존 줄글 배경
+                        if (!currentPdfFileName.isNullOrEmpty()) {
+                            val pdfFile = File(context.filesDir, currentPdfFileName!!)
+                            if (pdfFile.exists()) {
+                                PdfBackgroundViewer(
+                                    pdfFile = pdfFile,
+                                    currentPageIndex = currentPageIndex,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+
+                                // PDF 페이지 이동 네비게이터 컨트롤러
+                                Row(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(8.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(Color.Black.copy(alpha = 0.6f))
+                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        .zIndex(5f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { if (currentPageIndex > 0) currentPageIndex-- },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.ChevronLeft, contentDescription = "Prev Page", tint = Color.White)
+                                    }
+                                    Text(
+                                        text = "${currentPageIndex + 1} / $totalPdfPages",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    IconButton(
+                                        onClick = { if (currentPageIndex < totalPdfPages - 1) currentPageIndex++ },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.ChevronRight, contentDescription = "Next Page", tint = Color.White)
+                                    }
+                                }
+                            }
+                        } else if (currentTheme.hasLines) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 val lineGap = 26.dp.toPx()
                                 var y = lineGap + 10.dp.toPx()
@@ -1472,7 +1638,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 최적화된 사진 스티커 렌더링 및 제스처 수신 레이어
+                        // [Layer 1] 사진 스티커 렌더링 및 제스처 레이어
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1551,6 +1717,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
+                        // [Layer 2] 텍스트 레이어
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1592,7 +1759,7 @@ fun MemoEditorOverlay(
                                 .zIndex(if (!isPenMode) 3f else 0.5f),
                             enabled = !isPenMode,
                             decorationBox = { innerTextField ->
-                                if (tfValue.text.isEmpty() && strokes.isEmpty()) {
+                                if (tfValue.text.isEmpty() && strokes.isEmpty() && currentPdfFileName.isNullOrEmpty()) {
                                     Text(
                                         text = "메모를 입력하거나 상단 펜 모드로 손글씨를 써보세요...",
                                         style = TextStyle(
@@ -1606,6 +1773,7 @@ fun MemoEditorOverlay(
                             }
                         )
 
+                        // [Layer 3] 드로잉 및 필기 캔버스 (최상단)
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1697,6 +1865,9 @@ fun MemoEditorOverlay(
                                 memo.isItalic = activeItalic
                                 memo.isUnderline = activeUnderline
                                 memo.isStrikethrough = activeStrikethrough
+                                memo.pdfFileName = currentPdfFileName
+                                memo.currentPageIndex = currentPageIndex
+                                memo.totalPdfPages = totalPdfPages
                                 memo.spans.clear()
                                 memo.spans.addAll(spanList)
                                 memo.strokes.clear()
