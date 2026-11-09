@@ -275,9 +275,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 텍스트 캐시 최적화 유틸 함수 (이름 통일 및 컴포저블 제약 준수)
+// 컴파일 에러를 완벽히 없앤 깨끗한 텍스트 스타일 생성 함수
 @Composable
-fun rememberCachedStyledString(
+fun buildStyledAnnotatedString(
     context: Context,
     text: String,
     spans: List<TextSpanItem>,
@@ -890,7 +890,7 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        val styledText = rememberCachedStyledString(
+                        val styledText = buildStyledAnnotatedString(
                             context = context,
                             text = memo.text,
                             spans = memo.spans,
@@ -898,7 +898,7 @@ fun PegboardScreen(
                             defaultColor = memo.theme.textColor,
                             defaultSize = memo.fontSize
                         )
-                        // 오버로드 모호성을 없애기 위해 명시적으로 AnnotatedString 지정
+                        // 오버로드 모호성 해결을 위해 명시적 AnnotatedString 전달
                         Text(text = styledText as AnnotatedString, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
                         if (memo.strokes.isNotEmpty()) {
