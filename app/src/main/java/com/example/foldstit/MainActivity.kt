@@ -1,3 +1,4 @@
+
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.example.foldstit
 
@@ -274,9 +275,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 컴파일 에러 원천 차단 및 캐시 최적화된 텍스트 스타일 생성 함수
+// 텍스트 캐시 최적화 함수 (rememberCachedStyledString 이름 통일)
 @Composable
-fun buildOptimizedAnnotatedString(
+fun rememberCachedStyledString(
     context: Context,
     text: String,
     spans: List<TextSpanItem>,
@@ -884,7 +885,8 @@ fun PegboardScreen(
                             defaultColor = memo.theme.textColor,
                             defaultSize = memo.fontSize
                         )
-                        Text(text = styledText, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
+                        // 명시적으로 AnnotatedString 버전 호출
+                        Text(text = styledText as AnnotatedString, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
                         if (memo.strokes.isNotEmpty()) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1842,7 +1844,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                width = if (isSelected) 2.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
