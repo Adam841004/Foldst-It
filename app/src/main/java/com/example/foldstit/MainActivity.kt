@@ -283,9 +283,8 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
+    // Composable context에서 안전하게 폰트 패밀리 미리 로드
     val defaultFontFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    
-    // 컴포저블 컨텍스트 내에서 폰트 패밀리들을 미리 맵핑하여 비동기 이슈 방지
     val fontFamilies = remember(context) {
         MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
     }
@@ -1523,7 +1522,6 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 텍스트 입력 필드
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1579,7 +1577,6 @@ fun MemoEditorOverlay(
                             }
                         )
 
-                        // 사진 스티커 렌더링 (이동/크기조절/회전/삭제 핸들 포함)
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1662,7 +1659,6 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 드로잉 캔버스
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
