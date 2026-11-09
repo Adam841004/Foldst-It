@@ -283,14 +283,20 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    val fontFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    return remember(text, spans, defaultFont, defaultColor, defaultSize, fontFamily) {
+    val defaultFontFamily = LocalFontLoader.getFontFamily(context, defaultFont)
+    
+    // 컴포저블 컨텍스트 내에서 폰트 패밀리들을 미리 맵핑하여 비동기 이슈 방지
+    val fontFamilies = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    }
+
+    return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFontFamily) {
         buildAnnotatedString {
             append(text)
             if (spans.isEmpty()) {
                 addStyle(
                     SpanStyle(
-                        fontFamily = fontFamily,
+                        fontFamily = defaultFontFamily,
                         color = defaultColor,
                         fontSize = defaultSize.sp
                     ),
@@ -302,7 +308,7 @@ fun rememberCachedStyledString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                        val customFontFamily = LocalFontLoader.getFontFamily(context, fontEnum)
+                        val customFamily = fontFamilies[fontEnum] ?: defaultFontFamily
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
@@ -311,7 +317,7 @@ fun rememberCachedStyledString(
                         )
                         addStyle(
                             SpanStyle(
-                                fontFamily = customFontFamily,
+                                fontFamily = customFamily,
                                 color = Color(android.graphics.Color.parseColor(sp.colorHex)),
                                 fontSize = sp.fontSize.sp,
                                 fontWeight = if (sp.isBold) FontWeight.ExtraBold else FontWeight.Normal,
@@ -1517,7 +1523,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 텍스트 레이어 (캐시 적용)
+                        // 텍스트 입력 필드
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1573,7 +1579,7 @@ fun MemoEditorOverlay(
                             }
                         )
 
-                        // 💡 [수정] 사진 스티커 레이어: 드래그 이동(드롭) 및 회전 제스처 안정화
+                        // 사진 스티커 렌더링 (이동/크기조절/회전/삭제 핸들 포함)
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1588,7 +1594,6 @@ fun MemoEditorOverlay(
                                                 scaleY = sticker.scale,
                                                 rotationZ = sticker.rotation
                                             )
-                                            // 사진 본체 드래그 이동 (드래그 앤 드롭)
                                             .pointerInput(sticker.id) {
                                                 detectDragGestures { change, dragAmount ->
                                                     change.consume()
@@ -1615,7 +1620,6 @@ fun MemoEditorOverlay(
                                         )
 
                                         if (isSelected) {
-                                            // 삭제 핸들 (우측 상단)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
@@ -1632,7 +1636,6 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
                                             }
 
-                                            // 회전 핸들 (우측 하단): 위치 휨 방지 회전 연산
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
@@ -1659,7 +1662,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 드로잉 및 필기 캔버스
+                        // 드로잉 캔버스
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
