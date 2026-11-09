@@ -152,6 +152,37 @@ object LocalFontLoader {
     }
 }
 
+object ImageLoaderUtil {
+    fun loadResizedBitmap(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        var inputStream = context.contentResolver.openInputStream(uri)
+        BitmapFactory.decodeStream(inputStream, null, options)
+        inputStream?.close()
+
+        options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+        options.inJustDecodeBounds = false
+        options.inPreferredConfig = Bitmap.Config.RGB_565
+
+        inputStream = context.contentResolver.openInputStream(uri)
+        val bitmap = BitmapFactory.decodeStream(inputStream, null, options)
+        inputStream?.close()
+        return bitmap
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.run { outHeight to outWidth }
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight = height / 2
+            val halfWidth = width / 2
+            while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+}
+
 data class TextSpanItem(
     val start: Int,
     val end: Int,
@@ -1249,7 +1280,6 @@ fun MemoEditorOverlay(
     var selectedPenWidth by remember { mutableStateOf(memo.penWidth) }
     var showDrawingPalette by remember { mutableStateOf(false) }
 
-    // PDF 배경 관련 상태 관리 변수들
     var currentPdfFileName by remember { mutableStateOf(memo.pdfFileName) }
     var currentPageIndex by remember { mutableStateOf(memo.currentPageIndex) }
     var totalPdfPages by remember { mutableStateOf(memo.totalPdfPages) }
@@ -1268,25 +1298,28 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
+    // 다운샘플링이 적용된 사진 첨부 런처 (렉/버벅임 원천 방지)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
-                val fileName = "photo_${UUID.randomUUID()}.png"
-                val outFile = File(context.filesDir, fileName)
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                val bitmap = ImageLoaderUtil.loadResizedBitmap(context, uri, 512, 512)
+                if (bitmap != null) {
+                    val fileName = "photo_${UUID.randomUUID()}.png"
+                    val outFile = File(context.filesDir, fileName)
+                    FileOutputStream(outFile).use { out ->
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 90, out)
+                    }
+                    photoStickers.add(PhotoStickerItem(fileName = fileName, offsetX = 60f, offsetY = 80f, scale = 1.0f))
+                    Toast.makeText(context, "사진이 최적화되어 추가되었습니다.", Toast.LENGTH_SHORT).show()
                 }
-                photoStickers.add(PhotoStickerItem(fileName = fileName, offsetX = 40f, offsetY = 60f))
-                Toast.makeText(context, "사진이 추가되었습니다. 터치하여 위치를 이동하거나 크기를 조절하세요.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "사진 불러오기 실패", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // PDF 파일 선택 런처 추가
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -1404,7 +1437,6 @@ fun MemoEditorOverlay(
                                 Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Add Photo", tint = Color(0xFF00897B))
                             }
 
-                            // PDF 불러오기 버튼 추가
                             IconButton(
                                 onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                                 modifier = Modifier.size(36.dp)
@@ -1580,7 +1612,6 @@ fun MemoEditorOverlay(
                                 }
                             }
                     ) {
-                        // [Layer 0] PDF 배경 렌더링 또는 기존 줄글 배경
                         if (!currentPdfFileName.isNullOrEmpty()) {
                             val pdfFile = File(context.filesDir, currentPdfFileName!!)
                             if (pdfFile.exists()) {
@@ -1590,7 +1621,6 @@ fun MemoEditorOverlay(
                                     modifier = Modifier.fillMaxSize()
                                 )
 
-                                // PDF 페이지 이동 네비게이터 컨트롤러
                                 Row(
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
@@ -1638,7 +1668,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // [Layer 1] 사진 스티커 렌더링 및 제스처 레이어
+                        // 최적화된 사진 스티커 렌더링 및 편집 제스처 레이어 (핸들 포함)
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1658,7 +1688,7 @@ fun MemoEditorOverlay(
                                                     selectedPhotoId = sticker.id
                                                     sticker.offsetX += pan.x
                                                     sticker.offsetY += pan.y
-                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.2f, 5.0f)
+                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.2f, 4.0f)
                                                     sticker.rotation = (sticker.rotation + rotation) % 360f
                                                 }
                                             }
@@ -1667,13 +1697,13 @@ fun MemoEditorOverlay(
                                                 color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
                                                 shape = RoundedCornerShape(4.dp)
                                             )
-                                            .zIndex(if (isSelected) 10f else 2f)
+                                            .zIndex(if (isSelected) 50f else 2f)
                                     ) {
                                         Image(
                                             bitmap = b.asImageBitmap(),
                                             contentDescription = "Photo Sticker",
                                             modifier = Modifier
-                                                .width(140.dp)
+                                                .width(160.dp)
                                                 .wrapContentHeight()
                                                 .clip(RoundedCornerShape(4.dp))
                                                 .clickable { selectedPhotoId = sticker.id }
@@ -1683,11 +1713,14 @@ fun MemoEditorOverlay(
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
-                                                    .offset(x = 8.dp, y = (-8).dp)
-                                                    .size(26.dp)
+                                                    .offset(x = 10.dp, y = (-10).dp)
+                                                    .size(28.dp)
                                                     .clip(CircleShape)
                                                     .background(Color.Red)
-                                                    .clickable { photoStickers.remove(sticker) },
+                                                    .clickable { 
+                                                        photoStickers.remove(sticker)
+                                                        selectedPhotoId = null
+                                                    },
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
@@ -1696,20 +1729,22 @@ fun MemoEditorOverlay(
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
-                                                    .offset(x = 8.dp, y = 8.dp)
-                                                    .size(28.dp)
+                                                    .offset(x = 10.dp, y = 10.dp)
+                                                    .size(30.dp)
                                                     .clip(CircleShape)
                                                     .background(Color(0xFF1976D2))
                                                     .pointerInput(sticker.id) {
                                                         detectDragGestures { change, dragAmount ->
                                                             change.consume()
                                                             val angleDelta = atan2(dragAmount.y, dragAmount.x) * (180f / Math.PI.toFloat())
-                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.15f) % 360f
+                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.2f) % 360f
+                                                            val scaleDelta = (dragAmount.x + dragAmount.y) * 0.005f
+                                                            sticker.scale = (sticker.scale + scaleDelta).coerceIn(0.3f, 4.0f)
                                                         }
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate/Scale", tint = Color.White, modifier = Modifier.size(18.dp))
                                             }
                                         }
                                     }
@@ -1717,7 +1752,6 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // [Layer 2] 텍스트 레이어
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1773,7 +1807,6 @@ fun MemoEditorOverlay(
                             }
                         )
 
-                        // [Layer 3] 드로잉 및 필기 캔버스 (최상단)
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
