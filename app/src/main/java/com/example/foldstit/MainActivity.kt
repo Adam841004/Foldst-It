@@ -7,6 +7,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
@@ -22,7 +24,6 @@ import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.UnderlineSpan
-import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -33,11 +34,13 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -64,8 +67,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
@@ -95,6 +99,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.util.UUID
+import kotlin.math.atan2
 import kotlin.math.hypot
 
 enum class NoteTheme(
@@ -158,6 +163,16 @@ data class TextSpanItem(
 data class NormPoint(val x: Float, val y: Float)
 data class NormStroke(val points: List<NormPoint>, val colorHex: String = "#212121", val width: Float = 5f)
 
+// 자유 배치/확대/회전 지원 사진 스티커 모델
+data class PhotoStickerItem(
+    val id: String = UUID.randomUUID().toString(),
+    val fileName: String,
+    var normX: Float = 0.5f,
+    var normY: Float = 0.5f,
+    var scale: Float = 1.0f,
+    var rotation: Float = 0.0f
+)
+
 data class MemoItem(
     val id: String = UUID.randomUUID().toString(),
     var text: String = "",
@@ -171,6 +186,7 @@ data class MemoItem(
     var isStrikethrough: Boolean = false,
     val spans: MutableList<TextSpanItem> = mutableListOf(),
     val strokes: MutableList<NormStroke> = mutableListOf(),
+    val photos: MutableList<PhotoStickerItem> = mutableListOf(),
     var rotationAngle: Float = 0f,
     var updatedAt: Long = System.currentTimeMillis()
 )
@@ -180,8 +196,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // 상단 상태바 완전 투명화 및 Edge-to-Edge 설정 (3번 사진 상단바 이질감 해결)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
@@ -291,7 +305,6 @@ fun PegboardScreen(
     var editingMemo by remember { mutableStateOf<MemoItem?>(null) }
     var isDockExpanded by remember { mutableStateOf(true) }
 
-    // 하단 툴바를 통해 활성화되는 검색 & 필터 모달 상태 (3번 요청 반영)
     var isFilterSheetVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilterTheme by remember { mutableStateOf<NoteTheme?>(null) }
@@ -306,64 +319,84 @@ fun PegboardScreen(
     val flutterAnim = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
 
-    fun renderTextBitmap(memo: MemoItem) {
+    // 위젯 전용 고화질 텍스트 및 사진 스티커 비트맵 렌더러
+    fun renderCompositeBitmap(memo: MemoItem) {
         try {
-            if (memo.text.isEmpty()) {
-                val file = File(context.filesDir, "text_${memo.id}.png")
-                if (file.exists()) file.delete()
-                return
-            }
-
             val bmpWidth = 600
             val bmpHeight = 600
             val bmp = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(bmp)
 
-            val basePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = when (memo.theme) {
-                    NoteTheme.NOTEBOOK -> android.graphics.Color.parseColor("#1A237E")
-                    else -> android.graphics.Color.parseColor("#2C2C2C")
-                }
-                textSize = (memo.fontSize * 2.8f).coerceIn(32f, 72f)
-                typeface = LocalFontLoader.getTypeface(context, memo.font)
-            }
+            // 1. 첨부된 사진 스티커 먼저 렌더링
+            memo.photos.forEach { p ->
+                val pFile = File(context.filesDir, p.fileName)
+                if (pFile.exists()) {
+                    val rawBmp = BitmapFactory.decodeFile(pFile.absolutePath)
+                    if (rawBmp != null) {
+                        val baseSize = 220f * p.scale
+                        val aspect = rawBmp.height.toFloat() / rawBmp.width.toFloat()
+                        val sw = baseSize
+                        val sh = baseSize * aspect
 
-            val ssb = SpannableStringBuilder(memo.text)
-            if (memo.spans.isNotEmpty()) {
-                memo.spans.forEach { sp ->
-                    val s = sp.start.coerceIn(0, memo.text.length)
-                    val e = sp.end.coerceIn(0, memo.text.length)
-                    if (s < e) {
-                        val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { memo.font }
-                        val customTf = LocalFontLoader.getTypeface(context, fontEnum)
-                        ssb.setSpan(ForegroundColorSpan(android.graphics.Color.parseColor(sp.colorHex)), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                            ssb.setSpan(TypefaceSpan(customTf), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        val matrix = Matrix().apply {
+                            postScale(sw / rawBmp.width, sh / rawBmp.height)
+                            postRotate(p.rotation, sw / 2f, sh / 2f)
+                            postTranslate(p.normX * bmpWidth - sw / 2f, p.normY * bmpHeight - sh / 2f)
                         }
-                        if (sp.isBold) ssb.setSpan(StyleSpan(Typeface.BOLD), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        if (sp.isItalic) ssb.setSpan(StyleSpan(Typeface.ITALIC), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        if (sp.isUnderline) ssb.setSpan(UnderlineSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        if (sp.isStrikethrough) ssb.setSpan(StrikethroughSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                        canvas.drawBitmap(rawBmp, matrix, paint)
                     }
                 }
             }
 
-            val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                StaticLayout.Builder.obtain(ssb, 0, ssb.length, basePaint, bmpWidth - 48)
-                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .setLineSpacing(8f, 1.15f)
-                    .setIncludePad(false)
-                    .setMaxLines(8)
-                    .build()
-            } else {
-                @Suppress("DEPRECATION")
-                StaticLayout(ssb, basePaint, bmpWidth - 48, Layout.Alignment.ALIGN_NORMAL, 1.15f, 8f, false)
-            }
+            // 2. 텍스트 레이어 렌더링
+            if (memo.text.isNotEmpty()) {
+                val basePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = when (memo.theme) {
+                        NoteTheme.NOTEBOOK -> android.graphics.Color.parseColor("#1A237E")
+                        else -> android.graphics.Color.parseColor("#2C2C2C")
+                    }
+                    textSize = (memo.fontSize * 2.8f).coerceIn(32f, 72f)
+                    typeface = LocalFontLoader.getTypeface(context, memo.font)
+                }
 
-            canvas.save()
-            canvas.translate(24f, 24f)
-            staticLayout.draw(canvas)
-            canvas.restore()
+                val ssb = SpannableStringBuilder(memo.text)
+                if (memo.spans.isNotEmpty()) {
+                    memo.spans.forEach { sp ->
+                        val s = sp.start.coerceIn(0, memo.text.length)
+                        val e = sp.end.coerceIn(0, memo.text.length)
+                        if (s < e) {
+                            val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { memo.font }
+                            val customTf = LocalFontLoader.getTypeface(context, fontEnum)
+                            ssb.setSpan(ForegroundColorSpan(android.graphics.Color.parseColor(sp.colorHex)), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                ssb.setSpan(TypefaceSpan(customTf), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            }
+                            if (sp.isBold) ssb.setSpan(StyleSpan(Typeface.BOLD), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            if (sp.isItalic) ssb.setSpan(StyleSpan(Typeface.ITALIC), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            if (sp.isUnderline) ssb.setSpan(UnderlineSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            if (sp.isStrikethrough) ssb.setSpan(StrikethroughSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+                    }
+                }
+
+                val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    StaticLayout.Builder.obtain(ssb, 0, ssb.length, basePaint, bmpWidth - 48)
+                        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                        .setLineSpacing(8f, 1.15f)
+                        .setIncludePad(false)
+                        .setMaxLines(8)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    StaticLayout(ssb, basePaint, bmpWidth - 48, Layout.Alignment.ALIGN_NORMAL, 1.15f, 8f, false)
+                }
+
+                canvas.save()
+                canvas.translate(24f, 24f)
+                staticLayout.draw(canvas)
+                canvas.restore()
+            }
 
             val textFile = File(context.filesDir, "text_${memo.id}.png")
             FileOutputStream(textFile).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
@@ -394,6 +427,7 @@ fun PegboardScreen(
                     rotationAngle = obj.optDouble("rotationAngle", 0.0).toFloat(),
                     updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                 )
+
                 val spansArr = obj.optJSONArray("spans")
                 if (spansArr != null) {
                     for (s in 0 until spansArr.length()) {
@@ -413,6 +447,7 @@ fun PegboardScreen(
                         )
                     }
                 }
+
                 val strokesArr = obj.optJSONArray("strokes")
                 if (strokesArr != null) {
                     for (j in 0 until strokesArr.length()) {
@@ -424,6 +459,23 @@ fun PegboardScreen(
                             pts.add(NormPoint(p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
                         }
                         memo.strokes.add(NormStroke(pts, sObj.optString("color", "#212121"), sObj.optDouble("width", 5.0).toFloat()))
+                    }
+                }
+
+                val photosArr = obj.optJSONArray("photos")
+                if (photosArr != null) {
+                    for (m in 0 until photosArr.length()) {
+                        val pObj = photosArr.getJSONObject(m)
+                        memo.photos.add(
+                            PhotoStickerItem(
+                                id = pObj.optString("id", UUID.randomUUID().toString()),
+                                fileName = pObj.getString("fileName"),
+                                normX = pObj.optDouble("normX", 0.5).toFloat(),
+                                normY = pObj.optDouble("normY", 0.5).toFloat(),
+                                scale = pObj.optDouble("scale", 1.0).toFloat(),
+                                rotation = pObj.optDouble("rotation", 0.0).toFloat()
+                            )
+                        )
                     }
                 }
                 list.add(memo)
@@ -474,7 +526,7 @@ fun PegboardScreen(
                         stroke.points.forEach { pt ->
                             pArr.put(JSONObject().apply {
                                 put("x", pt.x)
-                                pt.y.toDouble().let { put("y", it) }
+                                put("y", pt.y)
                             })
                         }
                         put("points", pArr)
@@ -482,6 +534,19 @@ fun PegboardScreen(
                     sArr.put(strokeObj)
                 }
                 put("strokes", sArr)
+
+                val pArr = JSONArray()
+                memo.photos.forEach { p ->
+                    pArr.put(JSONObject().apply {
+                        put("id", p.id)
+                        put("fileName", p.fileName)
+                        put("normX", p.normX)
+                        put("normY", p.normY)
+                        put("scale", p.scale)
+                        put("rotation", p.rotation)
+                    })
+                }
+                put("photos", pArr)
             }
             arr.put(obj)
         }
@@ -501,7 +566,7 @@ fun PegboardScreen(
             val jsonStr = memosToJsonString(memoList)
             memoList.forEach { memo ->
                 CoroutineScope(Dispatchers.IO).launch {
-                    renderTextBitmap(memo)
+                    renderCompositeBitmap(memo)
                     if (memo.strokes.isNotEmpty()) {
                         try {
                             val bmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
@@ -518,7 +583,7 @@ fun PegboardScreen(
                                 if (s.points.size > 1) {
                                     val path = android.graphics.Path()
                                     path.moveTo(s.points[0].x * 500f, s.points[0].y * 500f)
-                                    for (pt in s.points) { path.lineTo(pt.x * 500f, pt.y * 500f) }
+                                    for (pt in s.points) { lineTo(pt.x * 500f, pt.y * 500f) }
                                     canvas.drawPath(path, paint)
                                 }
                             }
@@ -628,7 +693,6 @@ fun PegboardScreen(
             }
         }
 
-        // 본문 타공판 그리드 (상단 투명 상태바 패딩 적용으로 이질감 완벽 해소)
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 160.dp),
             contentPadding = PaddingValues(
@@ -715,6 +779,31 @@ fun PegboardScreen(
                         }
                     }
 
+                    // 첨부된 사진 스티커 썸네일 표시
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        memo.photos.forEach { p ->
+                            val pFile = File(context.filesDir, p.fileName)
+                            if (pFile.exists()) {
+                                val b = BitmapFactory.decodeFile(pFile.absolutePath)
+                                if (b != null) {
+                                    Image(
+                                        bitmap = b.asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size((50 * p.scale).dp)
+                                            .offset(
+                                                x = (p.normX * 120).dp,
+                                                y = (p.normY * 120).dp
+                                            )
+                                            .rotate(p.rotation)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .alpha(0.85f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -780,7 +869,6 @@ fun PegboardScreen(
             }
         }
 
-        // 다중 선택 액션 바
         if (isSelectionMode) {
             Card(
                 shape = RoundedCornerShape(32.dp),
@@ -826,7 +914,6 @@ fun PegboardScreen(
                 }
             }
         } else {
-            // 하단 플로팅 독 (+ New, Search, Sync, Backup, Restore)
             Card(
                 shape = RoundedCornerShape(32.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -863,7 +950,6 @@ fun PegboardScreen(
                             Text("New", fontSize = 10.sp, color = Color.DarkGray)
                         }
 
-                        // 3번 요청 반영: 하단 툴바에 배치된 검색 및 필터 팝업 트리거
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable { isFilterSheetVisible = !isFilterSheetVisible }
@@ -912,7 +998,6 @@ fun PegboardScreen(
             }
         }
 
-        // 하단 검색/필터 팝업 모달
         if (isFilterSheetVisible) {
             Card(
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
@@ -1030,7 +1115,6 @@ fun PegboardScreen(
         )
     }
 
-    // 풀스크린 오버레이 편집기 (1번 화면 밀림 문제 원천 차단)
     editingMemo?.let { targetMemo ->
         BackHandler { editingMemo = null }
         MemoEditorOverlay(
@@ -1053,7 +1137,6 @@ fun PegboardScreen(
     }
 }
 
-// 1번 화면 위로 밀림 방지 & 2번 돋보기 잔상 방지를 적용한 풀스크린 편집기
 @Composable
 fun MemoEditorOverlay(
     memo: MemoItem,
@@ -1067,6 +1150,8 @@ fun MemoEditorOverlay(
     var currentTheme by remember { mutableStateOf(memo.theme) }
 
     val spanList = remember { mutableStateListOf<TextSpanItem>().apply { addAll(memo.spans) } }
+    val photoStickers = remember { mutableStateListOf<PhotoStickerItem>().apply { addAll(memo.photos) } }
+    var selectedPhotoId by remember { mutableStateOf<String?>(null) }
 
     var activeFont by remember { mutableStateOf(memo.font) }
     var activeColorHex by remember { mutableStateOf("#2C2C2C") }
@@ -1097,6 +1182,25 @@ fun MemoEditorOverlay(
     var canvasHeight by remember { mutableStateOf(1f) }
 
     val focusRequester = remember { FocusRequester() }
+
+    // 갤러리 사진 선택기 (첨부 파일 내부 캐싱)
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val fileName = "photo_${UUID.randomUUID()}.png"
+                val outFile = File(context.filesDir, fileName)
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                }
+                photoStickers.add(PhotoStickerItem(fileName = fileName))
+                Toast.makeText(context, "사진이 추가되었습니다. 두 손가락으로 크기와 회전을 조절하세요.", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "사진 불러오기 실패", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     fun applyOrSetStyle(
         newFont: MemoFont? = null,
@@ -1154,7 +1258,7 @@ fun MemoEditorOverlay(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .imePadding() // 키보드가 올라올 때 카드 전체가 위로 날아가지 않고 카드 내부만 수축
+                .imePadding()
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(
@@ -1162,7 +1266,7 @@ fun MemoEditorOverlay(
                         .fillMaxSize()
                         .padding(12.dp)
                 ) {
-                    // 상단 고정 툴바 (키보드가 올라와도 항상 그 자리에 유지됨 - 1번 사진 해결)
+                    // 상단 고정 1단 툴바
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1186,6 +1290,14 @@ fun MemoEditorOverlay(
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(Icons.Default.AutoFixNormal, contentDescription = "Eraser", tint = if (isEraserMode) Color(0xFFE91E63) else currentTheme.textColor)
+                            }
+
+                            // 신규 사진 추가 버튼
+                            IconButton(
+                                onClick = { photoPickerLauncher.launch("image/*") },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Add Photo", tint = Color(0xFF00897B))
                             }
 
                             if (isPenMode && !isEraserMode) {
@@ -1305,7 +1417,6 @@ fun MemoEditorOverlay(
                         }
                     }
 
-                    // 테마 및 폰트 설정 패널
                     AnimatedVisibility(visible = showMemoSettings) {
                         Card(
                             shape = RoundedCornerShape(8.dp),
@@ -1347,17 +1458,15 @@ fun MemoEditorOverlay(
                         }
                     }
 
-                    // 본문 텍스트 & 다채색 드로잉 / 지우개 캔버스 (2번 사진: 돋보기 잔상 방지 래퍼 적용)
+                    // 본문 작업 영역: [사진 스티커 레이어] + [텍스트필드 레이어] + [드로잉 캔버스 레이어]
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                             .pointerInput(Unit) {
                                 detectTapGestures {
-                                    // 빈 공간 터치 시 선택 핸들과 Magnifier 강제 해제
-                                    if (tfValue.selection.collapsed) {
-                                        focusManager.clearFocus()
-                                    }
+                                    selectedPhotoId = null
+                                    focusManager.clearFocus()
                                 }
                             }
                     ) {
@@ -1377,6 +1486,89 @@ fun MemoEditorOverlay(
                             }
                         }
 
+                        // 1. 첨부된 사진 스티커 레이어 (자유 드래그, 핀치 줌, 두 손가락/모서리 핸들 회전)
+                        photoStickers.forEach { sticker ->
+                            val pFile = File(context.filesDir, sticker.fileName)
+                            if (pFile.exists()) {
+                                val b = BitmapFactory.decodeFile(pFile.absolutePath)
+                                if (b != null) {
+                                    val isSelected = selectedPhotoId == sticker.id
+                                    Box(
+                                        modifier = Modifier
+                                            .offset(
+                                                x = (sticker.normX * 260).dp,
+                                                y = (sticker.normY * 340).dp
+                                            )
+                                            .graphicsLayer(
+                                                scaleX = sticker.scale,
+                                                scaleY = sticker.scale,
+                                                rotationZ = sticker.rotation
+                                            )
+                                            .pointerInput(sticker.id) {
+                                                detectTransformGestures { _, pan, zoom, rotation ->
+                                                    selectedPhotoId = sticker.id
+                                                    sticker.normX = (sticker.normX + pan.x / 1000f).coerceIn(0.05f, 0.95f)
+                                                    sticker.normY = (sticker.normY + pan.y / 1400f).coerceIn(0.05f, 0.95f)
+                                                    sticker.scale = (sticker.scale * zoom).coerceIn(0.5f, 3.0f)
+                                                    sticker.rotation = (sticker.rotation + rotation) % 360f
+                                                }
+                                            }
+                                            .border(
+                                                width = if (isSelected) 1.5.dp else 0.dp,
+                                                color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .padding(4.dp)
+                                            .zIndex(if (isSelected) 5f else 1.5f)
+                                    ) {
+                                        Image(
+                                            bitmap = b.asImageBitmap(),
+                                            contentDescription = "Photo Sticker",
+                                            modifier = Modifier
+                                                .size(130.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .shadow(4.dp, RoundedCornerShape(6.dp))
+                                        )
+
+                                        // 모서리 회전 및 삭제 핸들
+                                        if (isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .size(22.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.Red)
+                                                    .clickable { photoStickers.remove(sticker) },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(14.dp))
+                                            }
+
+                                            // 모서리 원형 회전 핸들 (터치 드래그로 각도 회전)
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .size(24.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFF1976D2))
+                                                    .pointerInput(sticker.id) {
+                                                        detectDragGestures { change, dragAmount ->
+                                                            change.consume()
+                                                            val angleDelta = atan2(dragAmount.y, dragAmount.x) * (180f / Math.PI.toFloat())
+                                                            sticker.rotation = (sticker.rotation + angleDelta * 0.1f) % 360f
+                                                        }
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2. 텍스트 입력 레이어 (돋보기 잔상 방지: selection이 무한 잔류하지 않도록 터치 시점에 안전 릴리즈)
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1415,7 +1607,7 @@ fun MemoEditorOverlay(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .focusRequester(focusRequester)
-                                .zIndex(if (!isPenMode) 2f else 0f),
+                                .zIndex(if (!isPenMode) 3f else 0.5f),
                             enabled = !isPenMode,
                             decorationBox = { innerTextField ->
                                 if (tfValue.text.isEmpty() && strokes.isEmpty()) {
@@ -1432,10 +1624,11 @@ fun MemoEditorOverlay(
                             }
                         )
 
+                        // 3. 드로잉 / 지우개 캔버스 레이어
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .zIndex(if (isPenMode) 2f else 1f)
+                                .zIndex(if (isPenMode) 4f else 1f)
                                 .pointerInput(isPenMode, isEraserMode, selectedDrawColorHex, selectedPenWidth) {
                                     if (isPenMode) {
                                         detectDragGestures(
@@ -1500,7 +1693,7 @@ fun MemoEditorOverlay(
                         }
                     }
 
-                    // 하단 닫기 / 저장 버튼
+                    // 하단 닫기 / 완료 버튼
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                         horizontalArrangement = Arrangement.End
@@ -1522,6 +1715,8 @@ fun MemoEditorOverlay(
                                 memo.spans.addAll(spanList)
                                 memo.strokes.clear()
                                 memo.strokes.addAll(strokes)
+                                memo.photos.clear()
+                                memo.photos.addAll(photoStickers)
                                 onSave(memo)
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
@@ -1574,7 +1769,7 @@ fun MemoEditorOverlay(
                                     listOf(2.5f to "초미세", 5f to "보통", 10f to "굵게", 18f to "형광펜").forEach { (w, label) ->
                                         OutlinedButton(
                                             onClick = { selectedPenWidth = w },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(
                                                 containerColor = if (selectedPenWidth == w) Color(0xFF37474F) else Color.Transparent
                                             ),
