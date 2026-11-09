@@ -566,26 +566,26 @@ fun PegboardScreen(
                     renderCompositeBitmap(memo)
                     if (memo.strokes.isNotEmpty()) {
                         try {
-                            val drawingBmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
-                            val drawingCanvas = android.graphics.Canvas(drawingBmp)
-                            val drawingPaint = Paint().apply {
+                            val bmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(bmp)
+                            val paint = Paint().apply {
                                 isAntiAlias = true
                                 style = Paint.Style.STROKE
                                 strokeCap = Paint.Cap.ROUND
                                 strokeJoin = Paint.Join.ROUND
                             }
                             memo.strokes.forEach { s ->
-                                drawingPaint.color = android.graphics.Color.parseColor(s.colorHex)
-                                drawingPaint.strokeWidth = s.width * 1.5f
+                                paint.color = android.graphics.Color.parseColor(s.colorHex)
+                                paint.strokeWidth = s.width * 1.5f
                                 if (s.points.size > 1) {
                                     val path = android.graphics.Path()
                                     path.moveTo(s.points[0].x * 500f, s.points[0].y * 500f)
                                     for (pt in s.points) { path.lineTo(pt.x * 500f, pt.y * 500f) }
-                                    drawingCanvas.drawPath(path, drawingPaint)
+                                    canvas.drawPath(path, paint)
                                 }
                             }
                             val outFile = File(context.filesDir, "drawing_${memo.id}.png")
-                            FileOutputStream(outFile).use { out -> drawingBmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+                            FileOutputStream(outFile).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
                         } catch (_: Exception) {}
                     } else {
                         val outFile = File(context.filesDir, "drawing_${memo.id}.png")
@@ -1652,7 +1652,17 @@ fun MemoEditorOverlay(
                                     }
                                 }
                         ) {
+                            val drawingBmp = Bitmap.createBitmap(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(drawingBmp)
+                            val paint = Paint().apply {
+                                isAntiAlias = true
+                                style = Paint.Style.STROKE
+                                strokeCap = Paint.Cap.ROUND
+                                strokeJoin = Paint.Join.ROUND
+                            }
                             strokes.forEach { s ->
+                                paint.color = android.graphics.Color.parseColor(s.colorHex)
+                                paint.strokeWidth = s.width * 1.5f
                                 if (s.points.size > 1) {
                                     val path = android.graphics.Path()
                                     path.moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
@@ -1661,11 +1671,14 @@ fun MemoEditorOverlay(
                                 }
                             }
                             if (!isEraserMode && currentStrokePoints.size > 1) {
+                                paint.color = android.graphics.Color.parseColor(selectedDrawColorHex)
+                                paint.strokeWidth = selectedPenWidth * 1.5f
                                 val path = android.graphics.Path()
                                 path.moveTo(currentStrokePoints[0].x * size.width, currentStrokePoints[0].y * size.height)
                                 for (p in currentStrokePoints) { path.lineTo(p.x * size.width, p.y * size.height) }
                                 canvas.drawPath(path, paint)
                             }
+                            drawImage(drawingBmp.asImageBitmap())
                         }
                     }
 
