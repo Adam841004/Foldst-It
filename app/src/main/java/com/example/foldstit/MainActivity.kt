@@ -100,7 +100,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.util.UUID
-import kotlin.math.atan2
 import kotlin.math.hypot
 
 enum class NoteTheme(
@@ -284,13 +283,14 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    return remember(text, spans, defaultFont, defaultColor, defaultSize) {
+    val fontFamily = LocalFontLoader.getFontFamily(context, defaultFont)
+    return remember(text, spans, defaultFont, defaultColor, defaultSize, fontFamily) {
         buildAnnotatedString {
             append(text)
             if (spans.isEmpty()) {
                 addStyle(
                     SpanStyle(
-                        fontFamily = LocalFontLoader.getFontFamily(context, defaultFont),
+                        fontFamily = fontFamily,
                         color = defaultColor,
                         fontSize = defaultSize.sp
                     ),
@@ -302,6 +302,7 @@ fun rememberCachedStyledString(
                     val e = sp.end.coerceIn(0, text.length)
                     if (s < e) {
                         val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
+                        val customFontFamily = LocalFontLoader.getFontFamily(context, fontEnum)
                         val textDecor = TextDecoration.combine(
                             listOfNotNull(
                                 if (sp.isUnderline) TextDecoration.Underline else null,
@@ -310,7 +311,7 @@ fun rememberCachedStyledString(
                         )
                         addStyle(
                             SpanStyle(
-                                fontFamily = LocalFontLoader.getFontFamily(context, fontEnum),
+                                fontFamily = customFontFamily,
                                 color = Color(android.graphics.Color.parseColor(sp.colorHex)),
                                 fontSize = sp.fontSize.sp,
                                 fontWeight = if (sp.isBold) FontWeight.ExtraBold else FontWeight.Normal,
@@ -1516,7 +1517,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 텍스트 레이어 (캐시 적용으로 버벅임 완전 해소)
+                        // 텍스트 레이어 (캐시 적용)
                         BasicTextField(
                             value = tfValue,
                             onValueChange = { newVal ->
@@ -1572,7 +1573,7 @@ fun MemoEditorOverlay(
                             }
                         )
 
-                        // 💡 [수정] 사진 스티커 레이어 (이동 및 회전 핸들 완벽 분리 구현)
+                        // 💡 [수정] 사진 스티커 레이어: 드래그 이동(드롭) 및 회전 제스처 안정화
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1585,10 +1586,9 @@ fun MemoEditorOverlay(
                                             .graphicsLayer(
                                                 scaleX = sticker.scale,
                                                 scaleY = sticker.scale,
-                                                rotationZ = sticker.rotation,
-                                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+                                                rotationZ = sticker.rotation
                                             )
-                                            // 1. 사진 본체 드래그 시 위치(이동) 변경
+                                            // 사진 본체 드래그 이동 (드래그 앤 드롭)
                                             .pointerInput(sticker.id) {
                                                 detectDragGestures { change, dragAmount ->
                                                     change.consume()
@@ -1632,7 +1632,7 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
                                             }
 
-                                            // 회전 및 크기 조절 핸들 (우측 하단)
+                                            // 회전 핸들 (우측 하단): 위치 휨 방지 회전 연산
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
@@ -1643,8 +1643,7 @@ fun MemoEditorOverlay(
                                                     .pointerInput(sticker.id + "_rotate") {
                                                         detectDragGestures { change, dragAmount ->
                                                             change.consume()
-                                                            // 드래그 방향에 따른 각도 계산 (중심축 고정 회전)
-                                                            val angleDelta = (dragAmount.x - dragAmount.y) * 0.5f
+                                                            val angleDelta = (dragAmount.x - dragAmount.y) * 0.4f
                                                             sticker.rotation = (sticker.rotation + angleDelta) % 360f
                                                             val scaleDelta = (dragAmount.x + dragAmount.y) * 0.003f
                                                             sticker.scale = (sticker.scale + scaleDelta).coerceIn(0.3f, 4.0f)
