@@ -127,6 +127,7 @@ enum class MemoFont(val title: String, val fileName: String) {
 
 object LocalFontLoader {
     private val typefaceCache = mutableMapOf<String, Typeface>()
+    private val fontFamilyCache = mutableMapOf<String, FontFamily>()
 
     fun getTypeface(context: Context, font: MemoFont): Typeface {
         if (font.fileName.isEmpty()) return Typeface.DEFAULT
@@ -142,9 +143,15 @@ object LocalFontLoader {
         }
     }
 
-    fun getFontFamily(context: Context, font: MemoFont): FontFamily {
+    // 컴포저블 컨텍스트 외부에서도 안전하게 호출 가능한 FontFamily 캐시 헬퍼
+    fun getCachedFontFamily(context: Context, font: MemoFont): FontFamily {
+        if (font.fileName.isEmpty()) return FontFamily.Default
+        if (fontFamilyCache.containsKey(font.name)) return fontFamilyCache[font.name]!!
+
         val tf = getTypeface(context, font)
-        return FontFamily(tf)
+        val family = FontFamily(tf)
+        fontFamilyCache[font.name] = family
+        return family
     }
 }
 
@@ -274,7 +281,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Composable 제약을 완벽히 준수하는 캐시 기반 스타일 스트링 생성기
+// 순수 캐시 기반 텍스트 스타일 생성 함수 (컴포저블 컨텍스트 제약 문제 완전 해결)
 @Composable
 fun rememberCachedStyledString(
     context: Context,
@@ -284,10 +291,9 @@ fun rememberCachedStyledString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    // 순수 일반 객체인 FontFamily를 미리 안전하게 캐싱
-    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
+    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getCachedFontFamily(context, defaultFont) }
     val families = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+        MemoFont.values().associateWith { LocalFontLoader.getCachedFontFamily(context, it) }
     }
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
@@ -877,8 +883,6 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        val defaultFamily = LocalFontLoader.getFontFamily(context, memo.font)
-                        val fontFamilies = MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
                         val styledText = rememberCachedStyledString(
                             context = context,
                             text = memo.text,
@@ -1225,10 +1229,9 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
-    // Composable 범위 내에서 폰트 패밀리 미리 로드
-    val defaultFamily = remember(context, activeFont) { LocalFontLoader.getFontFamily(context, activeFont) }
+    val defaultFamily = remember(context, activeFont) { LocalFontLoader.getCachedFontFamily(context, activeFont) }
     val fontFamilies = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+        MemoFont.values().associateWith { LocalFontLoader.getCachedFontFamily(context, it) }
     }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
