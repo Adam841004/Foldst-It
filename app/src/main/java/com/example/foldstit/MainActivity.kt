@@ -1170,6 +1170,9 @@ fun MemoEditorOverlay(
     val undoStack = remember { mutableStateListOf<NormStroke>() }
     var currentStrokePoints by remember { mutableStateOf(listOf<NormPoint>()) }
 
+    var canvasWidth by remember { mutableStateOf(1f) }
+    var canvasHeight by remember { mutableStateOf(1f) }
+
     val focusRequester = remember { FocusRequester() }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -1469,7 +1472,6 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // [핵심 해결] 사진 스티커에 전용 제스처 수신 영역을 부여하여 이동/크기조절/회전이 즉시 반영되도록 구현
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1644,7 +1646,10 @@ fun MemoEditorOverlay(
                                     }
                                 }
                         ) {
-                            val drawingBmp = Bitmap.createBitmap(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                            canvasWidth = size.width.toFloat().coerceAtLeast(1f)
+                            canvasHeight = size.height.toFloat().coerceAtLeast(1f)
+
+                            val drawingBmp = Bitmap.createBitmap(canvasWidth.toInt(), canvasHeight.toInt(), Bitmap.Config.ARGB_8888)
                             val canvas = android.graphics.Canvas(drawingBmp)
                             val paint = Paint().apply {
                                 isAntiAlias = true
@@ -1657,8 +1662,8 @@ fun MemoEditorOverlay(
                                 paint.strokeWidth = s.width * 1.5f
                                 if (s.points.size > 1) {
                                     val path = android.graphics.Path()
-                                    path.moveTo(s.points[0].x * size.width, s.points[0].y * size.height)
-                                    for (pt in s.points) { path.lineTo(pt.x * size.width, pt.y * size.height) }
+                                    path.moveTo(s.points[0].x * canvasWidth, s.points[0].y * canvasHeight)
+                                    for (pt in s.points) { path.lineTo(pt.x * canvasWidth, pt.y * canvasHeight) }
                                     canvas.drawPath(path, paint)
                                 }
                             }
@@ -1666,8 +1671,8 @@ fun MemoEditorOverlay(
                                 paint.color = android.graphics.Color.parseColor(selectedDrawColorHex)
                                 paint.strokeWidth = selectedPenWidth * 1.5f
                                 val path = android.graphics.Path()
-                                path.moveTo(currentStrokePoints[0].x * size.width, currentStrokePoints[0].y * size.height)
-                                for (p in currentStrokePoints) { path.lineTo(p.x * size.width, p.y * size.height) }
+                                path.moveTo(currentStrokePoints[0].x * canvasWidth, currentStrokePoints[0].y * canvasHeight)
+                                for (p in currentStrokePoints) { path.lineTo(p.x * canvasWidth, p.y * canvasHeight) }
                                 canvas.drawPath(path, paint)
                             }
                             drawImage(drawingBmp.asImageBitmap())
@@ -1764,7 +1769,7 @@ fun MemoEditorOverlay(
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Modifier.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 colorPalette.forEach { hex ->
