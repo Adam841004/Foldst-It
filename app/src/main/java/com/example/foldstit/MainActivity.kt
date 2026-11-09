@@ -100,6 +100,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.util.UUID
+import kotlin.math.atan2
 import kotlin.math.hypot
 
 enum class NoteTheme(
@@ -274,7 +275,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 순수 AnnotatedString 생성 유틸 (컴포저블 컨텍스트 제약 문제 완전 제거)
+// 텍스트 렌더링 최적화 캐시 유틸
+@Composable
 fun buildOptimizedAnnotatedString(
     context: Context,
     text: String,
@@ -284,41 +286,47 @@ fun buildOptimizedAnnotatedString(
     defaultSize: Int
 ): AnnotatedString {
     val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    return buildAnnotatedString {
-        append(text)
-        if (spans.isEmpty()) {
-            addStyle(
-                SpanStyle(
-                    fontFamily = defaultFamily,
-                    color = defaultColor,
-                    fontSize = defaultSize.sp
-                ),
-                0, text.length
-            )
-        } else {
-            spans.forEach { sp ->
-                val s = sp.start.coerceIn(0, text.length)
-                val e = sp.end.coerceIn(0, text.length)
-                if (s < e) {
-                    val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
-                    val customFamily = LocalFontLoader.getFontFamily(context, fontEnum)
-                    val textDecor = TextDecoration.combine(
-                        listOfNotNull(
-                            if (sp.isUnderline) TextDecoration.Underline else null,
-                            if (sp.isStrikethrough) TextDecoration.LineThrough else null
+    val families = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    }
+
+    return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
+        buildAnnotatedString {
+            append(text)
+            if (spans.isEmpty()) {
+                addStyle(
+                    SpanStyle(
+                        fontFamily = defaultFamily,
+                        color = defaultColor,
+                        fontSize = defaultSize.sp
+                    ),
+                    0, text.length
+                )
+            } else {
+                spans.forEach { sp ->
+                    val s = sp.start.coerceIn(0, text.length)
+                    val e = sp.end.coerceIn(0, text.length)
+                    if (s < e) {
+                        val fontEnum = try { MemoFont.valueOf(sp.fontName) } catch (_: Exception) { defaultFont }
+                        val customFamily = families[fontEnum] ?: defaultFamily
+                        val textDecor = TextDecoration.combine(
+                            listOfNotNull(
+                                if (sp.isUnderline) TextDecoration.Underline else null,
+                                if (sp.isStrikethrough) TextDecoration.LineThrough else null
+                            )
                         )
-                    )
-                    addStyle(
-                        SpanStyle(
-                            fontFamily = customFamily,
-                            color = Color(android.graphics.Color.parseColor(sp.colorHex)),
-                            fontSize = sp.fontSize.sp,
-                            fontWeight = if (sp.isBold) FontWeight.ExtraBold else FontWeight.Normal,
-                            textGeometricTransform = if (sp.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
-                            textDecoration = textDecor
-                        ),
-                        s, e
-                    )
+                        addStyle(
+                            SpanStyle(
+                                fontFamily = customFamily,
+                                color = Color(android.graphics.Color.parseColor(sp.colorHex)),
+                                fontSize = sp.fontSize.sp,
+                                fontWeight = if (sp.isBold) FontWeight.ExtraBold else FontWeight.Normal,
+                                textGeometricTransform = if (sp.isItalic) TextGeometricTransform(skewX = -0.28f) else null,
+                                textDecoration = textDecor
+                            ),
+                            s, e
+                        )
+                    }
                 }
             }
         }
@@ -1215,6 +1223,11 @@ fun MemoEditorOverlay(
 
     val focusRequester = remember { FocusRequester() }
 
+    val defaultFamily = remember(context, activeFont) { LocalFontLoader.getFontFamily(context, activeFont) }
+    val fontFamilies = remember(context) {
+        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -1480,7 +1493,7 @@ fun MemoEditorOverlay(
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(containerColor = if (activeFont == f) Color(0xFFE0E0E0) else Color.Transparent)
                                         ) {
-                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = LocalFontLoader.getFontFamily(context, f))
+                                            Text(f.title, fontSize = 10.sp, color = Color.Black, fontFamily = fontFamilies[f])
                                         }
                                     }
                                 }
@@ -1569,7 +1582,7 @@ fun MemoEditorOverlay(
                                         style = TextStyle(
                                             color = currentTheme.textColor.copy(alpha = 0.4f),
                                             fontSize = activeFontSize.sp,
-                                            fontFamily = LocalFontLoader.getFontFamily(context, activeFont)
+                                            fontFamily = defaultFamily
                                         )
                                     )
                                 }
@@ -1577,6 +1590,7 @@ fun MemoEditorOverlay(
                             }
                         )
 
+                        // 💡 [삼성노트 스타일 완벽 구현] 사진 스티커 (드래그 이동, 확대/축소, 회전, 삭제 핸들)
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1589,8 +1603,10 @@ fun MemoEditorOverlay(
                                             .graphicsLayer(
                                                 scaleX = sticker.scale,
                                                 scaleY = sticker.scale,
-                                                rotationZ = sticker.rotation
+                                                rotationZ = sticker.rotation,
+                                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                                             )
+                                            // 사진 본체 드래그 이동 (드래그 앤 드롭)
                                             .pointerInput(sticker.id) {
                                                 detectDragGestures { change, dragAmount ->
                                                     change.consume()
@@ -1617,6 +1633,7 @@ fun MemoEditorOverlay(
                                         )
 
                                         if (isSelected) {
+                                            // 삭제 핸들 (우측 상단)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
@@ -1633,6 +1650,7 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
                                             }
 
+                                            // 회전 및 크기 조절 핸들 (우측 하단) - 중심점 휨 방지 회전 연산
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
@@ -1651,7 +1669,7 @@ fun MemoEditorOverlay(
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate/Scale", tint = Color.White, modifier = Modifier.size(18.dp))
                                             }
                                         }
                                     }
