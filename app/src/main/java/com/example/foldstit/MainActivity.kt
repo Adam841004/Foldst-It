@@ -1,4 +1,3 @@
-
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.example.foldstit
 
@@ -143,9 +142,10 @@ object LocalFontLoader {
         }
     }
 
+    @Composable
     fun getFontFamily(context: Context, font: MemoFont): FontFamily {
         val tf = getTypeface(context, font)
-        return FontFamily(tf)
+        return remember(font) { FontFamily(tf) }
     }
 }
 
@@ -275,7 +275,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 텍스트 캐시 최적화 함수 (rememberCachedStyledString 이름 통일)
+// 텍스트 캐시 최적화 유틸 함수 (이름 통일 및 컴포저블 제약 준수)
 @Composable
 fun rememberCachedStyledString(
     context: Context,
@@ -286,8 +286,21 @@ fun rememberCachedStyledString(
     defaultSize: Int
 ): AnnotatedString {
     val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    val fontMap = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    val nanumFamily = LocalFontLoader.getFontFamily(context, MemoFont.NANUM_PEN)
+    val garamFamily = LocalFontLoader.getFontFamily(context, MemoFont.GARAM)
+    val galmaetFamily = LocalFontLoader.getFontFamily(context, MemoFont.GALMAET)
+    val godingFamily = LocalFontLoader.getFontFamily(context, MemoFont.GODING)
+    val gyuriFamily = LocalFontLoader.getFontFamily(context, MemoFont.GYURI)
+
+    val fontMap = remember(defaultFamily, nanumFamily, garamFamily, galmaetFamily, godingFamily, gyuriFamily) {
+        mapOf(
+            MemoFont.DEFAULT to FontFamily.Default,
+            MemoFont.NANUM_PEN to nanumFamily,
+            MemoFont.GARAM to garamFamily,
+            MemoFont.GALMAET to galmaetFamily,
+            MemoFont.GODING to godingFamily,
+            MemoFont.GYURI to gyuriFamily
+        )
     }
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
@@ -885,7 +898,7 @@ fun PegboardScreen(
                             defaultColor = memo.theme.textColor,
                             defaultSize = memo.fontSize
                         )
-                        // 명시적으로 AnnotatedString 버전 호출
+                        // 오버로드 모호성을 없애기 위해 명시적으로 AnnotatedString 지정
                         Text(text = styledText as AnnotatedString, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
                         if (memo.strokes.isNotEmpty()) {
@@ -1844,7 +1857,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (isSelected) 2.dp else 1.dp,
+                                                width = if (isSelected) 2.5.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
