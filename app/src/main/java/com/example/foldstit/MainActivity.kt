@@ -275,7 +275,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 컴파일 에러를 완벽히 없앤 깨끗한 텍스트 스타일 생성 함수
+// 오버로드 모호성을 없애고 컴포저블 제약을 준수하는 단일 스타일 생성 함수
 @Composable
 fun buildStyledAnnotatedString(
     context: Context,
@@ -898,7 +898,7 @@ fun PegboardScreen(
                             defaultColor = memo.theme.textColor,
                             defaultSize = memo.fontSize
                         )
-                        // 오버로드 모호성 해결을 위해 명시적 AnnotatedString 전달
+                        // 명시적으로 AnnotatedString 버전 호출하여 오버로드 모호성 해결
                         Text(text = styledText as AnnotatedString, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
                         if (memo.strokes.isNotEmpty()) {
@@ -1563,7 +1563,7 @@ fun MemoEditorOverlay(
                             },
                             visualTransformation = {
                                 androidx.compose.ui.text.input.TransformedText(
-                                    rememberCachedStyledString(
+                                    buildStyledAnnotatedString(
                                         context = context,
                                         text = tfValue.text,
                                         spans = spanList,
