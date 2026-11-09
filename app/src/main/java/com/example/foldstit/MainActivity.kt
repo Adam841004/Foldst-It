@@ -566,26 +566,26 @@ fun PegboardScreen(
                     renderCompositeBitmap(memo)
                     if (memo.strokes.isNotEmpty()) {
                         try {
-                            val drawingBmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
-                            val drawingCanvas = android.graphics.Canvas(drawingBmp)
-                            val drawingPaint = Paint().apply {
+                            val bmp = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(bmp)
+                            val paint = Paint().apply {
                                 isAntiAlias = true
                                 style = Paint.Style.STROKE
                                 strokeCap = Paint.Cap.ROUND
                                 strokeJoin = Paint.Join.ROUND
                             }
                             memo.strokes.forEach { s ->
-                                drawingPaint.color = android.graphics.Color.parseColor(s.colorHex)
-                                drawingPaint.strokeWidth = s.width * 1.5f
+                                paint.color = android.graphics.Color.parseColor(s.colorHex)
+                                paint.strokeWidth = s.width * 1.5f
                                 if (s.points.size > 1) {
                                     val path = android.graphics.Path()
                                     path.moveTo(s.points[0].x * 500f, s.points[0].y * 500f)
                                     for (pt in s.points) { path.lineTo(pt.x * 500f, pt.y * 500f) }
-                                    drawingCanvas.drawPath(path, drawingPaint)
+                                    canvas.drawPath(path, paint)
                                 }
                             }
                             val outFile = File(context.filesDir, "drawing_${memo.id}.png")
-                            FileOutputStream(outFile).use { out -> drawingBmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+                            FileOutputStream(outFile).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
                         } catch (_: Exception) {}
                     } else {
                         val outFile = File(context.filesDir, "drawing_${memo.id}.png")
@@ -1048,7 +1048,7 @@ fun PegboardScreen(
                             val count = memoList.count { it.theme == theme }
                             FilterChip(
                                 selected = selectedFilterTheme == theme,
-                                onClick = { selectedFilterTheme = if (selectedFilterTheme == theme) theme else null },
+                                onClick = { selectedFilterTheme = if (selectedFilterTheme == theme) null else theme },
                                 label = { Text("${theme.title} ($count)", fontSize = 11.sp) },
                                 leadingIcon = {
                                     Box(
@@ -1743,7 +1743,7 @@ fun MemoEditorOverlay(
                                     listOf(2.5f to "초미세", 5f to "보통", 10f to "굵게", 18f to "형광펜").forEach { (w, label) ->
                                         OutlinedButton(
                                             onClick = { selectedPenWidth = w },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(
                                                 containerColor = if (selectedPenWidth == w) Color(0xFF37474F) else Color.Transparent
                                             ),
