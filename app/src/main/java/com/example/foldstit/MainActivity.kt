@@ -127,7 +127,6 @@ enum class MemoFont(val title: String, val fileName: String) {
 
 object LocalFontLoader {
     private val typefaceCache = mutableMapOf<String, Typeface>()
-    private val fontFamilyCache = mutableMapOf<String, FontFamily>()
 
     fun getTypeface(context: Context, font: MemoFont): Typeface {
         if (font.fileName.isEmpty()) return Typeface.DEFAULT
@@ -143,15 +142,10 @@ object LocalFontLoader {
         }
     }
 
-    // 일반 함수로 변경하여 컴포저블 제약 에러 원천 차단 및 자체 캐싱 적용
+    @Composable
     fun getFontFamily(context: Context, font: MemoFont): FontFamily {
-        if (font.fileName.isEmpty()) return FontFamily.Default
-        if (fontFamilyCache.containsKey(font.name)) return fontFamilyCache[font.name]!!
-
         val tf = getTypeface(context, font)
-        val family = FontFamily(tf)
-        fontFamilyCache[font.name] = family
-        return family
+        return remember(font) { FontFamily(tf) }
     }
 }
 
@@ -281,9 +275,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 텍스트 캐시 최적화 함수
+// 텍스트 스타일 생성 및 캐싱 함수 (함수명 통일 완료)
 @Composable
-fun rememberCachedStyledString(
+fun buildStyledAnnotatedString(
     context: Context,
     text: String,
     spans: List<TextSpanItem>,
@@ -292,8 +286,21 @@ fun rememberCachedStyledString(
     defaultSize: Int
 ): AnnotatedString {
     val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
-    val fontMap = remember(context) {
-        MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
+    val nanumFamily = LocalFontLoader.getFontFamily(context, MemoFont.NANUM_PEN)
+    val garamFamily = LocalFontLoader.getFontFamily(context, MemoFont.GARAM)
+    val galmaetFamily = LocalFontLoader.getFontFamily(context, MemoFont.GALMAET)
+    val godingFamily = LocalFontLoader.getFontFamily(context, MemoFont.GODING)
+    val gyuriFamily = LocalFontLoader.getFontFamily(context, MemoFont.GYURI)
+
+    val fontMap = remember(defaultFamily, nanumFamily, garamFamily, galmaetFamily, godingFamily, gyuriFamily) {
+        mapOf(
+            MemoFont.DEFAULT to FontFamily.Default,
+            MemoFont.NANUM_PEN to nanumFamily,
+            MemoFont.GARAM to garamFamily,
+            MemoFont.GALMAET to galmaetFamily,
+            MemoFont.GODING to godingFamily,
+            MemoFont.GYURI to gyuriFamily
+        )
     }
 
     return remember(text, spans, defaultFont, defaultColor, defaultSize, defaultFamily) {
@@ -883,7 +890,7 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        val styledText = rememberCachedStyledString(
+                        val styledText = buildStyledAnnotatedString(
                             context = context,
                             text = memo.text,
                             spans = memo.spans,
@@ -1849,7 +1856,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                width = if (isSelected) 2.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
