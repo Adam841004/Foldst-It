@@ -274,7 +274,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Composable 제약을 완벽히 준수하는 텍스트 캐시 최적화 함수
+// Composable 제약을 완벽히 준수하는 최적화된 텍스트 스타일 생성 함수
 @Composable
 fun buildOptimizedAnnotatedString(
     context: Context,
@@ -284,8 +284,7 @@ fun buildOptimizedAnnotatedString(
     defaultColor: Color,
     defaultSize: Int
 ): AnnotatedString {
-    // remember 블록 바깥에서 컴포저블 폰트들을 미리 안전하게 로드
-    val defaultFamily = LocalFontLoader.getFontFamily(context, defaultFont)
+    val defaultFamily = remember(context, defaultFont) { LocalFontLoader.getFontFamily(context, defaultFont) }
     val fontMap = remember(context) {
         MemoFont.values().associateWith { LocalFontLoader.getFontFamily(context, it) }
     }
@@ -1843,7 +1842,7 @@ fun MemoEditorOverlay(
                                             .clip(CircleShape)
                                             .background(Color(android.graphics.Color.parseColor(hex)))
                                             .border(
-                                                width = if (selectedPhotoId == null && isSelected) 2.5.dp else 1.dp,
+                                                width = if (isSelected) 2.5.dp else 1.dp,
                                                 color = if (isSelected) Color.White else Color.Gray.copy(alpha = 0.4f),
                                                 shape = CircleShape
                                             )
