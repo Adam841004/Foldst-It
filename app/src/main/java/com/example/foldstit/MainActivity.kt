@@ -275,7 +275,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 텍스트 스타일 캐시 최적화 함수
+// 텍스트 캐시 최적화 함수
 @Composable
 fun buildStyledAnnotatedString(
     context: Context,
@@ -1600,6 +1600,7 @@ fun MemoEditorOverlay(
                             }
                         )
 
+                        // 💡 [삼성노트 스타일 완벽 구현] 사진 스티커 드래그 앤 드롭 및 제스처 순서 개선
                         photoStickers.forEach { sticker ->
                             val pFile = File(context.filesDir, sticker.fileName)
                             if (pFile.exists()) {
@@ -1608,13 +1609,9 @@ fun MemoEditorOverlay(
                                     val isSelected = selectedPhotoId == sticker.id
                                     Box(
                                         modifier = Modifier
+                                            // 1. offset을 가장 먼저 적용하여 터치 좌표와 렌더링 위치를 정확히 일치시킴
                                             .offset(x = sticker.offsetX.dp, y = sticker.offsetY.dp)
-                                            .graphicsLayer(
-                                                scaleX = sticker.scale,
-                                                scaleY = sticker.scale,
-                                                rotationZ = sticker.rotation,
-                                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
-                                            )
+                                            // 2. 드래그 제스처를 offset 뒤에 배치하여 손가락을 따라 실시간으로 좌표 누적 이동
                                             .pointerInput(sticker.id) {
                                                 detectDragGestures { change, dragAmount ->
                                                     change.consume()
@@ -1623,6 +1620,12 @@ fun MemoEditorOverlay(
                                                     sticker.offsetY += dragAmount.y / density
                                                 }
                                             }
+                                            .graphicsLayer(
+                                                scaleX = sticker.scale,
+                                                scaleY = sticker.scale,
+                                                rotationZ = sticker.rotation,
+                                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+                                            )
                                             .border(
                                                 width = if (isSelected) 2.dp else 0.dp,
                                                 color = if (isSelected) Color(0xFF1976D2) else Color.Transparent,
@@ -1641,6 +1644,7 @@ fun MemoEditorOverlay(
                                         )
 
                                         if (isSelected) {
+                                            // 삭제 핸들 (우측 상단)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopEnd)
@@ -1657,6 +1661,7 @@ fun MemoEditorOverlay(
                                                 Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.White, modifier = Modifier.size(16.dp))
                                             }
 
+                                            // 회전 및 크기 조절 핸들 (우측 하단)
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
