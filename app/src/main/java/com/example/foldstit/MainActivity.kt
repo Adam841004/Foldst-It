@@ -275,7 +275,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 텍스트 스타일 생성 및 캐싱 함수
+// 텍스트 스타일 캐시 최적화 함수
 @Composable
 fun buildStyledAnnotatedString(
     context: Context,
@@ -890,8 +890,7 @@ fun PegboardScreen(
                             .fillMaxSize()
                             .padding(start = 12.dp, end = 12.dp, top = 26.dp, bottom = 10.dp)
                     ) {
-                        // 💡 핵심 수정: 비컴포저블 람다(visualTransformation 등) 내부가 아니라, 컴포저블 스코프(Box 내부)에서 미리 생성함
-                        val precomputedText = buildStyledAnnotatedString(
+                        val styledText = buildStyledAnnotatedString(
                             context = context,
                             text = memo.text,
                             spans = memo.spans,
@@ -899,7 +898,7 @@ fun PegboardScreen(
                             defaultColor = memo.theme.textColor,
                             defaultSize = memo.fontSize
                         )
-                        Text(text = precomputedText, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
+                        Text(text = styledText as AnnotatedString, maxLines = 6, lineHeight = (memo.fontSize + 6).sp, modifier = Modifier.fillMaxSize())
 
                         if (memo.strokes.isNotEmpty()) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1537,9 +1536,7 @@ fun MemoEditorOverlay(
                             }
                         }
 
-                        // 💡 핵심 수정: visualTransformation 내부에서 Composable 함수를 호출하던 것을 분리하여,
-                        // 바깥에서 미리 생성된 styledText를 안전하게 전달하도록 수정 완료
-                        val transformedStyledText = buildStyledAnnotatedString(
+                        val editorStyledText = buildStyledAnnotatedString(
                             context = context,
                             text = tfValue.text,
                             spans = spanList,
@@ -1574,7 +1571,7 @@ fun MemoEditorOverlay(
                             },
                             visualTransformation = {
                                 androidx.compose.ui.text.input.TransformedText(
-                                    transformedStyledText,
+                                    editorStyledText,
                                     androidx.compose.ui.text.input.OffsetMapping.Identity
                                 )
                             },
